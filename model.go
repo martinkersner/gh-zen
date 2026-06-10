@@ -331,9 +331,20 @@ func (m model) renderTabs() string {
 		} else {
 			style = style.Foreground(lipgloss.Color("#565f89"))
 		}
-		tabs = append(tabs, style.Render(t))
+		label := fmt.Sprintf("%s (%d)", t, m.tabCount(tab(i)))
+		tabs = append(tabs, style.Render(label))
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Left, tabs...)
+}
+
+// tabCount returns the number of items fetched for the given tab.
+func (m model) tabCount(t tab) int {
+	switch t {
+	case tabPRs:
+		return len(m.prList.Items())
+	default:
+		return len(m.issueList.Items())
+	}
 }
 
 func (m model) renderDetail() string {
