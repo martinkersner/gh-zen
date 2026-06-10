@@ -184,6 +184,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "ctrl+c":
 				return m, tea.Quit
+			case "ctrl+n":
+				m.detailViewport.ScrollDown(1)
+				return m, nil
+			case "ctrl+p":
+				m.detailViewport.ScrollUp(1)
+				return m, nil
 			}
 			// Forward scroll keys (arrows, pgup/pgdn, j/k) to the viewport.
 			var cmd tea.Cmd
