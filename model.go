@@ -132,6 +132,8 @@ func newModel() model {
 	m.prList.SetShowHelp(false)
 	m.issueList.SetShowTitle(false)
 	m.prList.SetShowTitle(false)
+	m.issueList.SetShowStatusBar(false)
+	m.prList.SetShowStatusBar(false)
 
 	// Move with ctrl+n / ctrl+p (and arrows); drop j/k.
 	up := key.NewBinding(key.WithKeys("up", "ctrl+p"), key.WithHelp("ctrl+p", "up"))
