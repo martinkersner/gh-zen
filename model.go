@@ -308,7 +308,8 @@ func (m model) detailBodyContent() string {
 	if m.detailLoading {
 		body = "Loading body..."
 	}
-	return lipgloss.NewStyle().Width(m.width - 2).Render(body)
+	w, _ := detailViewportSize(m.width, m.height)
+	return lipgloss.NewStyle().Width(w).Render(body)
 }
 
 // openDetailViewport sizes the detail viewport, loads the current body, and
