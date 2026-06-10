@@ -27,7 +27,10 @@ type item struct {
 	type_  string // "issue" or "pr"
 }
 
-func (i item) FilterValue() string { return i.title }
+// FilterValue mirrors Title() so substring search matches both the issue/PR
+// number and the title, and matched rune indexes line up with the rendered
+// row for highlighting.
+func (i item) FilterValue() string { return fmt.Sprintf("#%d %s", i.number, i.title) }
 func (i item) Title() string       { return fmt.Sprintf("#%d %s", i.number, i.title) }
 func (i item) Description() string { return "" }
 
@@ -115,6 +118,10 @@ func newModel() model {
 		issueList: list.New([]list.Item{}, newItemDelegate(), 0, 0),
 		prList:    list.New([]list.Item{}, newItemDelegate(), 0, 0),
 	}
+	// Use strict case-insensitive substring matching instead of the default
+	// fuzzy (subsequence) filter.
+	m.issueList.Filter = substringFilter
+	m.prList.Filter = substringFilter
 	m.issueList.SetShowHelp(false)
 	m.prList.SetShowHelp(false)
 	m.issueList.SetShowTitle(false)
