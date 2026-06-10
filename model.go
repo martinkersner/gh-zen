@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -19,6 +20,10 @@ const (
 	tabIssues tab = iota
 	tabPRs
 )
+
+// detailHeaderHeight is the number of lines the detail view reserves above the
+// scrollable body: the title line, the meta line, and the meta's bottom margin.
+const detailHeaderHeight = 3
 
 type item struct {
 	number int
@@ -96,10 +101,11 @@ type model struct {
 	prList    list.Model
 
 	// Detail pane
-	detailOpen    bool
-	detailLoading bool
-	detailItem    *item
-	detailBody    string
+	detailOpen     bool
+	detailLoading  bool
+	detailItem     *item
+	detailBody     string
+	detailViewport viewport.Model
 
 	// Cache: "issue_42" or "pr_7" -> body
 	bodyCache map[string]string
@@ -165,6 +171,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.updateListSize()
+		if m.detailOpen {
+			m.resizeDetailViewport()
+		}
 
 	case tea.KeyMsg:
 		if m.detailOpen {
@@ -176,7 +185,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c":
 				return m, tea.Quit
 			}
-			return m, nil
+			// Forward scroll keys (arrows, pgup/pgdn, j/k) to the viewport.
+			var cmd tea.Cmd
+			m.detailViewport, cmd = m.detailViewport.Update(msg)
+			return m, cmd
 		}
 
 		// While typing in the filter input, let the list consume every key
@@ -212,11 +224,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailOpen = true
 				m.detailItem = it
 				m.detailBody = m.cachedBody(it)
-				if m.detailBody == "" {
-					m.detailLoading = true
+				m.detailLoading = m.detailBody == ""
+				m.openDetailViewport()
+				if m.detailLoading {
 					return m, m.cmdFetchBody(it)
 				}
-				m.detailLoading = false
 			}
 		}
 
@@ -247,6 +259,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.detailOpen && m.detailItem != nil && cacheKey(m.detailItem) == msg.key {
 			m.detailBody = m.cachedBody(m.detailItem)
 			m.detailLoading = false
+			m.detailViewport.SetContent(m.detailBodyContent())
+			m.detailViewport.GotoTop()
 		}
 
 	case errMsg:
@@ -269,6 +283,54 @@ func (m *model) updateListSize() {
 	listHeight := m.height - 3
 	m.issueList.SetSize(m.width, listHeight)
 	m.prList.SetSize(m.width, listHeight)
+}
+
+// detailViewportSize computes the width/height for the detail body viewport
+// from the terminal size, reserving detailHeaderHeight lines for the title and
+// meta. Heights/widths are clamped to a minimum of 1 so tiny terminals don't
+// produce negative dimensions.
+func detailViewportSize(width, height int) (int, int) {
+	w := width - 2
+	if w < 1 {
+		w = 1
+	}
+	h := height - detailHeaderHeight
+	if h < 1 {
+		h = 1
+	}
+	return w, h
+}
+
+// detailBodyContent returns the body text (or a loading placeholder) wrapped to
+// the viewport width.
+func (m model) detailBodyContent() string {
+	body := m.detailBody
+	if m.detailLoading {
+		body = "Loading body..."
+	}
+	w, _ := detailViewportSize(m.width, m.height)
+	return lipgloss.NewStyle().Width(w).Render(body)
+}
+
+// openDetailViewport sizes the detail viewport, loads the current body, and
+// anchors it at the top so the title is always visible when a detail view opens.
+func (m *model) openDetailViewport() {
+	w, h := detailViewportSize(m.width, m.height)
+	m.detailViewport = viewport.New(w, h)
+	// Add j/k as scroll aliases alongside the default arrow/pgup/pgdn keys.
+	m.detailViewport.KeyMap.Up.SetKeys(append(m.detailViewport.KeyMap.Up.Keys(), "k")...)
+	m.detailViewport.KeyMap.Down.SetKeys(append(m.detailViewport.KeyMap.Down.Keys(), "j")...)
+	m.detailViewport.SetContent(m.detailBodyContent())
+	m.detailViewport.GotoTop()
+}
+
+// resizeDetailViewport updates the viewport dimensions and re-wraps its content
+// after a terminal resize while the detail view is open.
+func (m *model) resizeDetailViewport() {
+	w, h := detailViewportSize(m.width, m.height)
+	m.detailViewport.Width = w
+	m.detailViewport.Height = h
+	m.detailViewport.SetContent(m.detailBodyContent())
 }
 
 func (m model) selectedItem() *item {
@@ -361,18 +423,11 @@ func (m model) renderDetail() string {
 
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7aa2f7"))
 	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89")).MarginBottom(1)
-	bodyStyle := lipgloss.NewStyle().Width(m.width - 2)
 
 	title := titleStyle.Render(fmt.Sprintf("#%d %s", m.detailItem.number, m.detailItem.title))
 	meta := metaStyle.Render(fmt.Sprintf("[%s]  (esc/q to close)", m.detailItem.type_))
 
-	body := m.detailBody
-	if m.detailLoading {
-		body = "Loading body..."
-	}
-	bodyRendered := bodyStyle.Render(body)
-
-	return lipgloss.JoinVertical(lipgloss.Left, title, meta, bodyRendered)
+	return lipgloss.JoinVertical(lipgloss.Left, title, meta, m.detailViewport.View())
 }
 
 func cacheKey(it *item) string {
