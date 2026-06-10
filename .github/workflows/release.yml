@@ -1,0 +1,17 @@
+name: release
+on:
+  push:
+    tags:
+      - "v*"
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: generate changelog
+        run: git log --format="- %s %h" $(git describe --tags --abbrev=0 $(git describe --tags --abbrev=0)^)..$(git describe --tags --abbrev=0) > CHANGELOG.md
+      - uses: cli/gh-extension-precompile@v2
+        with:
+          go_version_file: go.mod

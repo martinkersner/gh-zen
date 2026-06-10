@@ -1,0 +1,8 @@
+# Build artifacts
+gh-zen
+
+# Research directory
+gh-dash-research/
+
+# Agent session metadata
+.omo/
