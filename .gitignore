@@ -6,3 +6,6 @@ gh-dash-research/
 
 # Agent session metadata
 .omo/
+
+# Worktrees
+.claude/worktrees/
