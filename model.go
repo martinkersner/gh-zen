@@ -24,8 +24,11 @@ const (
 	tabPRs
 )
 
-// detailHeaderHeight is the number of lines the detail view reserves above the
-// scrollable body: the title line.
+// detailHeaderHeight is the minimum number of lines the detail view reserves
+// above the scrollable body (a single-line title). The actual reserved height is
+// measured from the rendered header via lipgloss.Height, since a long title can
+// wrap to multiple rows on a narrow terminal; this constant is the fallback used
+// by call sites that only need the viewport width.
 const detailHeaderHeight = 1
 
 type item struct {
@@ -494,16 +497,18 @@ func (m *model) updateListSize() {
 	m.prList.SetSize(m.width, listHeight)
 }
 
-// detailViewportSize computes the width/height for the detail body viewport
-// from the terminal size, reserving detailHeaderHeight lines for the title
-// plus statusBarHeight for the bottom status bar. Heights/widths are
+// detailViewportSize computes the width/height for the detail body viewport from
+// the terminal size, reserving headerHeight lines for the (possibly wrapped)
+// title plus statusBarHeight for the bottom status bar. headerHeight is the
+// measured rendered height of the title block (see detailHeader); pass
+// detailHeaderHeight when only the width return is needed. Heights/widths are
 // clamped to a minimum of 1 so tiny terminals don't produce negative dimensions.
-func detailViewportSize(width, height int) (int, int) {
+func detailViewportSize(width, height, headerHeight int) (int, int) {
 	w := width - 2
 	if w < 1 {
 		w = 1
 	}
-	h := height - detailHeaderHeight - statusBarHeight
+	h := height - headerHeight - statusBarHeight
 	if h < 1 {
 		h = 1
 	}
@@ -527,7 +532,7 @@ func (m model) detailWrappedLines() []string {
 	if m.detailLoading {
 		body = "Loading body..."
 	}
-	w, _ := detailViewportSize(m.width, m.height)
+	w, _ := detailViewportSize(m.width, m.height, detailHeaderHeight)
 	wrapped := lipgloss.NewStyle().Width(w).Render(body)
 	return strings.Split(wrapped, "\n")
 }
@@ -669,7 +674,7 @@ func (m model) detailContent() string {
 // removed lines colored, wrapped to the viewport width.
 func (m model) detailDiffContent() string {
 	if m.detailDiffLoading {
-		w, _ := detailViewportSize(m.width, m.height)
+		w, _ := detailViewportSize(m.width, m.height, detailHeaderHeight)
 		return lipgloss.NewStyle().Width(w).Render("Loading diff...")
 	}
 	return colorizeDiff(m.detailDiff)
@@ -678,7 +683,7 @@ func (m model) detailDiffContent() string {
 // openDetailViewport sizes the detail viewport, loads the current body, and
 // anchors it at the top so the title is always visible when a detail view opens.
 func (m *model) openDetailViewport() {
-	w, h := detailViewportSize(m.width, m.height)
+	w, h := detailViewportSize(m.width, m.height, lipgloss.Height(m.detailHeader()))
 	m.detailViewport = viewport.New(w, h)
 	// Add j/k as scroll aliases alongside the default arrow/pgup/pgdn keys.
 	m.detailViewport.KeyMap.Up.SetKeys(append(m.detailViewport.KeyMap.Up.Keys(), "k")...)
@@ -690,7 +695,7 @@ func (m *model) openDetailViewport() {
 // resizeDetailViewport updates the viewport dimensions and re-wraps its content
 // after a terminal resize while the detail view is open.
 func (m *model) resizeDetailViewport() {
-	w, h := detailViewportSize(m.width, m.height)
+	w, h := detailViewportSize(m.width, m.height, lipgloss.Height(m.detailHeader()))
 	m.detailViewport.Width = w
 	m.detailViewport.Height = h
 	// Re-wrapping at the new width moves match line/column offsets, so recompute
@@ -872,11 +877,27 @@ func (m model) renderDetail() string {
 		return ""
 	}
 
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7aa2f7"))
+	return lipgloss.JoinVertical(lipgloss.Left, m.detailHeader(), m.detailViewport.View(), m.renderStatusBar())
+}
 
-	title := titleStyle.Render(fmt.Sprintf("#%d %s", m.detailItem.number, m.detailItem.title))
-
-	return lipgloss.JoinVertical(lipgloss.Left, title, m.detailViewport.View(), m.renderStatusBar())
+// detailHeader renders the detail view's title block, width-constrained to the
+// terminal width so a long "#<n> <title>" wraps deterministically. The viewport
+// height is derived from lipgloss.Height of this block, so the full (wrapped)
+// title stays visible at the top while the body scrolls below it.
+func (m model) detailHeader() string {
+	if m.detailItem == nil {
+		return ""
+	}
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#7aa2f7"))
+	// Constrain to the terminal width so a long title wraps deterministically;
+	// skip the constraint before the first resize (width 0) to avoid clamping to
+	// zero columns.
+	if m.width > 0 {
+		titleStyle = titleStyle.Width(m.width)
+	}
+	return titleStyle.Render(fmt.Sprintf("#%d %s", m.detailItem.number, m.detailItem.title))
 }
 
 func cacheKey(it *item) string {

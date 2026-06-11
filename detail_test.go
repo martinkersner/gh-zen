@@ -6,27 +6,71 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestDetailViewportSize(t *testing.T) {
 	cases := []struct {
 		name         string
-		w, h         int
+		w, h, hdr    int
 		wantW, wantH int
 	}{
-		{"normal", 80, 24, 78, 22},
-		{"tiny height", 80, 2, 78, 1},
-		{"zero", 0, 0, 1, 1},
-		{"negative", -5, -5, 1, 1},
+		{"normal", 80, 24, detailHeaderHeight, 78, 22},
+		{"tiny height", 80, 2, detailHeaderHeight, 78, 1},
+		{"zero", 0, 0, detailHeaderHeight, 1, 1},
+		{"negative", -5, -5, detailHeaderHeight, 1, 1},
+		{"wrapped header reserves more rows", 80, 24, 3, 78, 20},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			gotW, gotH := detailViewportSize(c.w, c.h)
+			gotW, gotH := detailViewportSize(c.w, c.h, c.hdr)
 			if gotW != c.wantW || gotH != c.wantH {
-				t.Errorf("detailViewportSize(%d,%d) = (%d,%d), want (%d,%d)",
-					c.w, c.h, gotW, gotH, c.wantW, c.wantH)
+				t.Errorf("detailViewportSize(%d,%d,%d) = (%d,%d), want (%d,%d)",
+					c.w, c.h, c.hdr, gotW, gotH, c.wantW, c.wantH)
 			}
 		})
+	}
+}
+
+// A long title on a narrow terminal wraps to multiple rows. The detail view must
+// reserve the wrapped header's full height (> detailHeaderHeight) and shrink the
+// body viewport accordingly, so header rows + viewport rows + status bar never
+// exceed the terminal height (no top-scroll/overflow re-introduced).
+func TestDetailHeaderHeightAccountsForWrappedTitle(t *testing.T) {
+	m := newModel()
+	longTitle := strings.Repeat("very long title word ", 10)
+	items := []list.Item{
+		item{number: 123, title: longTitle, body: "body", type_: "issue"},
+	}
+	m.issueList.SetItems(items)
+	m.loading = false
+
+	const w, h = 30, 24
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm := tm.(model)
+
+	hdrHeight := lipgloss.Height(mm.detailHeader())
+	if hdrHeight <= detailHeaderHeight {
+		t.Fatalf("expected wrapped header height > %d, got %d", detailHeaderHeight, hdrHeight)
+	}
+
+	if got := mm.detailViewport.Height; got != h-hdrHeight-statusBarHeight {
+		t.Errorf("viewport height = %d, want %d (term - header - statusbar)",
+			got, h-hdrHeight-statusBarHeight)
+	}
+
+	// Header + body viewport + status bar must fit within the terminal height.
+	total := hdrHeight + mm.detailViewport.Height + statusBarHeight
+	if total > h {
+		t.Errorf("rendered detail height %d exceeds terminal height %d", total, h)
+	}
+
+	// The full title must still start at the top of the rendered view.
+	firstLine := strings.SplitN(mm.View(), "\n", 2)[0]
+	if !strings.Contains(firstLine, "#123") {
+		t.Errorf("title not on first line of detail view: %q", firstLine)
 	}
 }
 
