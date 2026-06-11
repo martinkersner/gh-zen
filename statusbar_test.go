@@ -8,8 +8,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// The list view's status bar shows the current mode and the core key hints,
-// including how to quit.
+// The list view's status bar no longer shows a bare mode label (the tabs row
+// above already conveys mode); it shows only the core key hints when not
+// filtering. The mode lives in renderTabs.
 func TestStatusBarListMode(t *testing.T) {
 	m := newModel()
 	var tm tea.Model = m
@@ -21,8 +22,14 @@ func TestStatusBarListMode(t *testing.T) {
 
 	mm := tm.(model)
 	bar := mm.renderStatusBar()
-	if !strings.Contains(bar, "Issues") {
-		t.Errorf("status bar missing mode %q: %q", "Issues", bar)
+	// The bare mode word is redundant with the tabs row and must not appear in
+	// the status bar when not filtering.
+	if strings.Contains(bar, "Issues") {
+		t.Errorf("status bar should not show bare mode label: %q", bar)
+	}
+	// The tabs row is the single source of truth for the mode.
+	if !strings.Contains(mm.renderTabs(), "Issues") {
+		t.Errorf("tabs row missing mode label: %q", mm.renderTabs())
 	}
 	// The inline shortcut list is collapsed into a single `? help` hint; the
 	// full list lives in the overlay (see TestHelpOverlay*).
@@ -34,7 +41,8 @@ func TestStatusBarListMode(t *testing.T) {
 	}
 }
 
-// Switching to the PRs tab is reflected in the status bar mode.
+// Switching to the PRs tab is reflected in the tabs row, not the status bar
+// (which no longer carries a bare mode label).
 func TestStatusBarPRMode(t *testing.T) {
 	m := newModel()
 	var tm tea.Model = m
@@ -45,9 +53,12 @@ func TestStatusBarPRMode(t *testing.T) {
 	})
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyTab})
 
-	bar := tm.(model).renderStatusBar()
-	if !strings.Contains(bar, "PRs") {
-		t.Errorf("status bar missing PR mode: %q", bar)
+	mm := tm.(model)
+	if strings.Contains(mm.renderStatusBar(), "PRs") {
+		t.Errorf("status bar should not show bare PR mode label: %q", mm.renderStatusBar())
+	}
+	if !strings.Contains(mm.renderTabs(), "PRs") {
+		t.Errorf("tabs row missing PR mode label: %q", mm.renderTabs())
 	}
 }
 
