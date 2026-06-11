@@ -15,8 +15,8 @@ func TestSearchBarLeft(t *testing.T) {
 	}{
 		{"", true, "/"},          // live, editable input: bare slash
 		{"", false, ""},          // applied with no query: nothing
-		{"beta", true, "/ beta"}, // typing a query
-		{"beta", false, "/ beta"},
+		{"beta", true, "/beta"}, // typing a query
+		{"beta", false, "/beta"},
 	}
 	for _, tt := range tests {
 		if got := searchBarLeft(tt.query, tt.typing); got != tt.want {

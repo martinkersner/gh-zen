@@ -100,7 +100,7 @@ func TestStatusBarDetailSearchParity(t *testing.T) {
 		t.Fatal("detail search did not start")
 	}
 	bar := mm.renderStatusBar()
-	if !strings.Contains(bar, "/ be") {
+	if !strings.Contains(bar, "/be") {
 		t.Errorf("detail search bar missing slash-prefixed query: %q", bar)
 	}
 	if strings.Contains(bar, "search:") {
@@ -149,7 +149,7 @@ func TestStatusBarShowsFilterQuery(t *testing.T) {
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a', 'l'}})
 
 	bar := tm.(model).renderStatusBar()
-	if !strings.Contains(bar, "/ al") {
+	if !strings.Contains(bar, "/al") {
 		t.Errorf("status bar missing active filter query: %q", bar)
 	}
 	if strings.Contains(bar, "filter:") {
@@ -195,10 +195,10 @@ func TestStatusBarShowsLiveFilterWhileTyping(t *testing.T) {
 		t.Errorf("status bar should not show 'filter:' prefix: %q", bar)
 	}
 
-	// As runes are typed the live value renders one space after the slash.
+	// As runes are typed the live value renders directly after the slash.
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b', 'e'}})
 	bar = tm.(model).renderStatusBar()
-	if !strings.Contains(bar, "/ be") {
+	if !strings.Contains(bar, "/be") {
 		t.Errorf("status bar missing live typed filter value: %q", bar)
 	}
 }
