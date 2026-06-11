@@ -1117,7 +1117,10 @@ func colorizeDiff(diff string) string {
 	return strings.Join(lines, "\n")
 }
 
-func fetchIssuesAndPRs() tea.Cmd {
+// fetchIssuesAndPRs returns the cmd that loads the issue/PR lists from GitHub.
+// It is a package var (like ghDiff) so tests can swap in a hermetic data source
+// and drive the program offline without hitting the network.
+var fetchIssuesAndPRs = func() tea.Cmd {
 	return func() tea.Msg {
 		client, err := api.DefaultGraphQLClient()
 		if err != nil {
