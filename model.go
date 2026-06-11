@@ -879,7 +879,7 @@ func (m model) renderTabs() string {
 		} else {
 			style = style.Foreground(lipgloss.Color("#565f89"))
 		}
-		label := fmt.Sprintf("%s (%d)", t, m.tabCount(tab(i)))
+		label := fmt.Sprintf("%s (%s)", t, m.tabCountLabel(tab(i)))
 		tabs = append(tabs, style.Render(label))
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Left, tabs...)
@@ -893,6 +893,16 @@ func (m model) tabCount(t tab) int {
 	default:
 		return len(m.issueList.Items())
 	}
+}
+
+// tabCountLabel renders the bracket contents for a tab: "?" while the initial
+// fetch is still in flight (the count is unknown, not zero), otherwise the real
+// count — including "0" once a fetch genuinely returns no items.
+func (m model) tabCountLabel(t tab) string {
+	if m.loading {
+		return "?"
+	}
+	return strconv.Itoa(m.tabCount(t))
 }
 
 func (m model) renderDetail() string {

@@ -71,3 +71,40 @@ func TestTabCountsZeroBeforeFetch(t *testing.T) {
 		t.Errorf("tabCount(prs) = %d, want 0", got)
 	}
 }
+
+// While the initial fetch is in flight (m.loading == true) the count is unknown,
+// so the brackets must show "?" rather than a misleading "0".
+func TestTabBracketsShowQuestionMarkWhileLoading(t *testing.T) {
+	m := newModel() // newModel sets loading == true
+	if !m.loading {
+		t.Fatal("expected newModel to start with loading == true")
+	}
+	tabs := m.renderTabs()
+	if !strings.Contains(tabs, "Issues (?)") {
+		t.Errorf("tabs missing %q while loading: %q", "Issues (?)", tabs)
+	}
+	if !strings.Contains(tabs, "PRs (?)") {
+		t.Errorf("tabs missing %q while loading: %q", "PRs (?)", tabs)
+	}
+}
+
+// Once a fetch genuinely returns zero items the brackets must show the real
+// "0", not "?" — loading is cleared even on an empty result.
+func TestTabBracketsShowZeroAfterEmptyFetch(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: nil, prs: nil})
+
+	mm := tm.(model)
+	if mm.loading {
+		t.Fatal("expected loading cleared after fetch")
+	}
+	tabs := mm.renderTabs()
+	if !strings.Contains(tabs, "Issues (0)") {
+		t.Errorf("tabs missing %q after empty fetch: %q", "Issues (0)", tabs)
+	}
+	if !strings.Contains(tabs, "PRs (0)") {
+		t.Errorf("tabs missing %q after empty fetch: %q", "PRs (0)", tabs)
+	}
+}
