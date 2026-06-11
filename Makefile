@@ -1,4 +1,4 @@
-.PHONY: build install run clean
+.PHONY: build install run test clean
 
 BINARY := gh-zen
 
@@ -10,6 +10,9 @@ install: build
 
 run:
 	go run .
+
+test:
+	go test ./...
 
 clean:
 	rm -f $(BINARY)
