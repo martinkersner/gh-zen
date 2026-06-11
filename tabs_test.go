@@ -39,6 +39,29 @@ func TestTabCountsAfterFetch(t *testing.T) {
 	}
 }
 
+// The list renders directly under the tab row, with no blank line between them.
+func TestListRendersDirectlyUnderTabs(t *testing.T) {
+	m := newModel()
+	m.loading = false
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{
+		issues: []list.Item{item{number: 1, title: "alpha", type_: "issue"}},
+	})
+
+	lines := strings.Split(tm.(model).View(), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("view too short: %q", lines)
+	}
+	// Line 0 is the tab row; line 1 must be the first list item, not a blank.
+	if strings.TrimSpace(lines[1]) == "" {
+		t.Errorf("blank line between tabs and list: %q", lines[:3])
+	}
+	if !strings.Contains(lines[1], "#1 alpha") {
+		t.Errorf("first list row not directly under tabs, got %q", lines[1])
+	}
+}
+
 func TestTabCountsZeroBeforeFetch(t *testing.T) {
 	m := newModel()
 	if got := m.tabCount(tabIssues); got != 0 {
