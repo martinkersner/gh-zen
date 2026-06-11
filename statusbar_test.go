@@ -44,7 +44,7 @@ func TestStatusBarPRMode(t *testing.T) {
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyTab})
 
 	bar := tm.(model).renderStatusBar()
-	if !strings.Contains(bar, "Pull Requests") {
+	if !strings.Contains(bar, "PRs") {
 		t.Errorf("status bar missing PR mode: %q", bar)
 	}
 }

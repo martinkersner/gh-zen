@@ -808,7 +808,7 @@ func (m model) renderStatusBar() string {
 	} else {
 		mode := "Issues"
 		if m.activeTab == tabPRs {
-			mode = "Pull Requests"
+			mode = "PRs"
 		}
 		left = mode
 		// Surface the filter query so the user can see what they typed. While
