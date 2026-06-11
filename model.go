@@ -478,40 +478,54 @@ func (m model) detailBodyContent() string {
 	if len(m.detailMatches) == 0 {
 		return strings.Join(lines, "\n")
 	}
-	// Group matches by line, marking the active match so it can be styled
-	// distinctly from the rest.
-	type runHL struct {
-		start, length int
-		active        bool
+	// Per-line, mark which rune columns belong to the active match vs. any
+	// other match, then highlight each line in a single pass.
+	type lineHL struct {
+		active map[int]bool
+		other  map[int]bool
 	}
-	byLine := make(map[int][]runHL)
+	byLine := make(map[int]*lineHL)
 	for i, mt := range m.detailMatches {
-		byLine[mt.line] = append(byLine[mt.line], runHL{start: mt.startCol, length: mt.length, active: i == m.detailActiveMatch})
+		hl := byLine[mt.line]
+		if hl == nil {
+			hl = &lineHL{active: map[int]bool{}, other: map[int]bool{}}
+			byLine[mt.line] = hl
+		}
+		set := hl.other
+		if i == m.detailActiveMatch {
+			set = hl.active
+		}
+		for k := 0; k < mt.length; k++ {
+			set[mt.startCol+k] = true
+		}
 	}
-	for li, hls := range byLine {
+	for li, hl := range byLine {
 		if li < 0 || li >= len(lines) {
 			continue
 		}
-		var normal, active []int
-		for _, h := range hls {
-			for k := 0; k < h.length; k++ {
-				if h.active {
-					active = append(active, h.start+k)
-				} else {
-					normal = append(normal, h.start+k)
-				}
-			}
-		}
-		line := lines[li]
-		if len(normal) > 0 {
-			line = lipgloss.StyleRunes(line, normal, detailMatchStyle, lipgloss.NewStyle())
-		}
-		if len(active) > 0 {
-			line = lipgloss.StyleRunes(line, active, detailActiveMatchStyle, lipgloss.NewStyle())
-		}
-		lines[li] = line
+		lines[li] = highlightLine(lines[li], hl.active, hl.other)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// highlightLine renders line styling the runes in active with the active-match
+// style and those in other with the normal-match style, in a single pass.
+// Doing it in one pass (rather than two lipgloss.StyleRunes calls) avoids
+// re-indexing into a string that already contains ANSI escapes, which would
+// misalign the second set of indices once the first call inserted styling.
+func highlightLine(line string, active, other map[int]bool) string {
+	var b strings.Builder
+	for i, r := range []rune(line) {
+		switch {
+		case active[i]:
+			b.WriteString(detailActiveMatchStyle.Render(string(r)))
+		case other[i]:
+			b.WriteString(detailMatchStyle.Render(string(r)))
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // enterDetailSearch starts in-detail search mode with an empty query.

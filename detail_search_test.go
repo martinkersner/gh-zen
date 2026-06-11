@@ -169,3 +169,32 @@ func TestDetailCtrlNPScrollsWhenNotSearching(t *testing.T) {
 		t.Errorf("ctrl+p (not searching): want offset 0, got %d", off)
 	}
 }
+
+// When the active match and another match land on the same wrapped line, each
+// is highlighted with its own style (regression: a two-pass StyleRunes approach
+// misaligned the second set of indices once the first inserted ANSI escapes).
+func TestDetailSearchHighlightActiveAndOtherSameLine(t *testing.T) {
+	m := openDetailWithBody(t, "beta and beta again", 80, 24)
+
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	tm = typeRunes(tm, "beta")
+	mm := tm.(model)
+	if len(mm.detailMatches) != 2 {
+		t.Fatalf("matches = %d, want 2", len(mm.detailMatches))
+	}
+	// Active is match 0; both styled fragments must appear and the literal
+	// "beta" text must survive intact (not corrupted by overlapping escapes).
+	content := mm.detailBodyContent()
+	if strings.Count(content, "beta") != 2 {
+		t.Errorf("rendered content lost a match: %q", content)
+	}
+	activeSeq := detailActiveMatchStyle.Render("b")
+	otherSeq := detailMatchStyle.Render("b")
+	if !strings.Contains(content, activeSeq) {
+		t.Errorf("active match style not present in rendered content")
+	}
+	if !strings.Contains(content, otherSeq) {
+		t.Errorf("non-active match style not present in rendered content")
+	}
+}
