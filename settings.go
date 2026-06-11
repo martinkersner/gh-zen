@@ -16,6 +16,11 @@ const refreshInterval = 5 * time.Second
 // subtract this so the bar never overlaps scrollable content.
 const statusBarHeight = 1
 
+// loadingIndicator is the unobtrusive marker shown on the left of the status bar
+// while any fetch is in flight (initial load, refresh, or a lazily-fetched
+// detail body / PR diff). It keeps activity visible without blanking content.
+const loadingIndicator = "⟳ loading…"
+
 // tickMsg is emitted by the auto-refresh ticker. Each tick triggers a refresh of
 // the current view and re-arms the ticker.
 type tickMsg time.Time
