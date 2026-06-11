@@ -167,10 +167,31 @@ func (m model) refreshCurrentView() tea.Cmd {
 func (m *model) setListItems(tabIdx tab, items []list.Item) {
 	switch tabIdx {
 	case tabIssues:
-		m.issueList.SetItems(items)
+		applyListItems(&m.issueList, items)
 	case tabPRs:
-		m.prList.SetItems(items)
+		applyListItems(&m.prList, items)
 	}
+}
+
+// applyListItems replaces a list's items and, when a filter is active,
+// recomputes the filtered set synchronously. list.Model.SetItems returns a
+// tea.Cmd that produces a FilterMatchesMsg to refresh filteredItems; on a
+// refresh (dataMsg) that cmd would otherwise be discarded, leaving the visible
+// list stale and VisibleItems() empty until the next keystroke. Running the cmd
+// inline and feeding its message back through the list applies the new filtered
+// set immediately, so the visible list reflects the new items and a subsequent
+// restoreIndex clamps against the correct visible count.
+func applyListItems(l *list.Model, items []list.Item) {
+	cmd := l.SetItems(items)
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	if msg == nil {
+		return
+	}
+	updated, _ := l.Update(msg)
+	*l = updated
 }
 
 // restoreIndex re-selects idx on l, clamped to the current item count, so a
