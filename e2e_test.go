@@ -187,8 +187,8 @@ func TestE2EDetailSearch(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	tm.Type("needle")
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		// status bar shows "/ needle", matching the list filter display.
-		return bytes.Contains(b, []byte("/ needle"))
+		// status bar shows "/needle", matching the list filter display.
+		return bytes.Contains(b, []byte("/needle"))
 	}, teatest.WithDuration(e2eWaitTimeout))
 	quit(t, tm)
 }

@@ -18,7 +18,7 @@ func searchBarLeft(query string, typing bool) string {
 		}
 		return ""
 	}
-	return "/ " + query
+	return "/" + query
 }
 
 // searchMatch locates one occurrence of the in-detail search query inside the
