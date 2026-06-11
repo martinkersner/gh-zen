@@ -430,9 +430,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateListSize() {
-	// Reserve the tabs row + blank line above the list, plus the status bar row
-	// pinned to the bottom, so neither overlaps the scrollable list.
-	listHeight := m.height - 3 - statusBarHeight
+	// Reserve the tabs row above the list plus the status bar row pinned to the
+	// bottom, so neither overlaps the scrollable list. The list now renders
+	// directly under the tabs (no blank line), so only one row of chrome sits
+	// above it.
+	listHeight := m.height - 1 - statusBarHeight
 	m.issueList.SetSize(m.width, listHeight)
 	m.prList.SetSize(m.width, listHeight)
 }
@@ -676,7 +678,7 @@ func (m model) renderList() string {
 	var b string
 
 	// Tabs
-	b += m.renderTabs() + "\n\n"
+	b += m.renderTabs() + "\n"
 
 	// Error / Loading still show the bar so quit help is always visible.
 	if m.err != nil {
