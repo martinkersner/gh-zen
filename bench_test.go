@@ -3,9 +3,22 @@ package main
 import (
 	"bytes"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
+)
+
+// Bench-only render-wait bounds. The teatest benchmarks poll the program's
+// rendered output from a hot benchmark goroutine, which can starve the render
+// goroutine of CPU far longer than the e2e suite's interactive 3s margin
+// (e2eWaitTimeout) — especially under `make bench` (no -v, output buffered).
+// These are deliberately generous: they only bound a missed render so a stuck
+// run fails instead of hanging, and never enter the reported ns/op. Kept
+// separate so the e2e suite keeps its tight 3s guard.
+const (
+	benchWaitTimeout  = 10 * time.Second
+	benchFinalTimeout = 10 * time.Second
 )
 
 // Performance benchmarks for the TUI. They split into two layers:
@@ -147,7 +160,7 @@ func newSeededProgram(b *testing.B) *teatest.TestModel {
 }
 
 // waitForBench waits until the program's output contains needle, bounded by
-// e2eWaitTimeout. tm.Output() returns the same consuming reader each call, so
+// benchWaitTimeout. tm.Output() returns the same consuming reader each call, so
 // each WaitFor only sees bytes written since the previous read — callers must
 // pass a needle that the transition under test freshly re-renders. teatest.WaitFor
 // accepts the testing.TB interface, so it works from a benchmark.
@@ -155,7 +168,7 @@ func waitForBench(b *testing.B, tm *teatest.TestModel, needle string) {
 	b.Helper()
 	teatest.WaitFor(b, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte(needle))
-	}, teatest.WithDuration(e2eWaitTimeout))
+	}, teatest.WithDuration(benchWaitTimeout))
 }
 
 // quitBench tears down a teatest program and waits for it to finish, bounded by
@@ -163,7 +176,7 @@ func waitForBench(b *testing.B, tm *teatest.TestModel, needle string) {
 func quitBench(b *testing.B, tm *teatest.TestModel) {
 	b.Helper()
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-	tm.WaitFinished(b, teatest.WithFinalTimeout(e2eFinalTimeout))
+	tm.WaitFinished(b, teatest.WithFinalTimeout(benchFinalTimeout))
 }
 
 // The teatest transition benchmarks below all spin up a fresh program per timed
