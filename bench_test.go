@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"testing"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
@@ -24,18 +23,8 @@ import (
 // All of these run with `go test -bench=. -run='^$'` (see `make bench`) and
 // never touch the network.
 
-const (
-	// benchTermWidth/benchTermHeight match the e2e default terminal size so
-	// the measured layout work is representative.
-	benchTermWidth  = 80
-	benchTermHeight = 24
-	// benchWaitTimeout bounds each teatest WaitFor inside a benchmark iteration
-	// so a missed render fails the bench fast rather than hanging it. Generous
-	// vs. the in-memory render loop.
-	benchWaitTimeout = 3 * time.Second
-	// benchFinalTimeout bounds program shutdown after Quit in a teatest bench.
-	benchFinalTimeout = 3 * time.Second
-)
+// Terminal size and timeouts reuse the e2e_test.go constants (same package,
+// same values) so the bench harness stays in lockstep with the e2e harness.
 
 // seededModel returns a model with the sample issues/PRs already loaded and the
 // terminal sized, with the loading state cleared, ready to receive key input.
@@ -68,7 +57,7 @@ func openedDetailModel(b *testing.B, w, h int) model {
 // through Update: open the detail view, then back to the list. This exercises
 // the two heaviest transition handlers per iteration.
 func BenchmarkUpdateKeyBatch(b *testing.B) {
-	base := seededModel(b, benchTermWidth, benchTermHeight)
+	base := seededModel(b, e2eTermWidth, e2eTermHeight)
 	enter := tea.KeyMsg{Type: tea.KeyEnter}
 	esc := tea.KeyMsg{Type: tea.KeyEsc}
 
@@ -84,7 +73,7 @@ func BenchmarkUpdateKeyBatch(b *testing.B) {
 
 // BenchmarkUpdateNavigate measures cursor movement through Update on the list.
 func BenchmarkUpdateNavigate(b *testing.B) {
-	base := seededModel(b, benchTermWidth, benchTermHeight)
+	base := seededModel(b, e2eTermWidth, e2eTermHeight)
 	down := tea.KeyMsg{Type: tea.KeyCtrlN}
 	up := tea.KeyMsg{Type: tea.KeyCtrlP}
 
@@ -100,7 +89,7 @@ func BenchmarkUpdateNavigate(b *testing.B) {
 
 // BenchmarkViewList measures rendering the list screen.
 func BenchmarkViewList(b *testing.B) {
-	m := seededModel(b, benchTermWidth, benchTermHeight)
+	m := seededModel(b, e2eTermWidth, e2eTermHeight)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -111,7 +100,7 @@ func BenchmarkViewList(b *testing.B) {
 
 // BenchmarkViewDetail measures rendering the detail screen.
 func BenchmarkViewDetail(b *testing.B) {
-	m := openedDetailModel(b, benchTermWidth, benchTermHeight)
+	m := openedDetailModel(b, e2eTermWidth, e2eTermHeight)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -137,95 +126,108 @@ func stubFetchBench(b *testing.B) {
 	})
 }
 
-// newSeededProgram starts a teatest program whose list is populated by the
-// stubbed fetch (no network), the program analogue of newSeededModel.
+// newSeededProgram installs the offline fetch stub (so no network is touched)
+// and starts a teatest program whose list is populated by it — the program
+// analogue of newSeededModel. The stub is installed here rather than left to the
+// caller so a new teatest benchmark can't silently hit the network by forgetting
+// to stub.
 func newSeededProgram(b *testing.B) *teatest.TestModel {
 	b.Helper()
-	return teatest.NewTestModel(b, newModel(), teatest.WithInitialTermSize(benchTermWidth, benchTermHeight))
+	stubFetchBench(b)
+	return teatest.NewTestModel(b, newModel(), teatest.WithInitialTermSize(e2eTermWidth, e2eTermHeight))
 }
 
-// waitForBench waits until the output contains needle, bounded by
-// benchWaitTimeout. teatest.WaitFor accepts the testing.TB interface, so it
-// works from a benchmark.
+// waitForBench waits until the program's output contains needle, bounded by
+// e2eWaitTimeout. tm.Output() returns the same consuming reader each call, so
+// each WaitFor only sees bytes written since the previous read — callers must
+// pass a needle that the transition under test freshly re-renders. teatest.WaitFor
+// accepts the testing.TB interface, so it works from a benchmark.
 func waitForBench(b *testing.B, tm *teatest.TestModel, needle string) {
 	b.Helper()
 	teatest.WaitFor(b, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte(needle))
-	}, teatest.WithDuration(benchWaitTimeout))
+	}, teatest.WithDuration(e2eWaitTimeout))
 }
+
+// quitBench tears down a teatest program and waits for it to finish, bounded by
+// a timeout so a stuck shutdown fails the benchmark loudly instead of hanging.
+func quitBench(b *testing.B, tm *teatest.TestModel) {
+	b.Helper()
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.WaitFinished(b, teatest.WithFinalTimeout(e2eFinalTimeout))
+}
+
+// The teatest transition benchmarks below all spin up a fresh program per timed
+// iteration and tear it down at the end of the same iteration. A fresh program
+// avoids the cross-iteration pitfall of reusing one tm: tm.Output() is a
+// consuming reader, so across iterations a "back to <screen>" wait could race a
+// skipped/diffed frame and either pass on stale bytes or hang. Per-iteration
+// programs keep each measurement self-contained and the needle waits unambiguous,
+// matching the one-shot pattern proven in e2e_test.go. The teardown is measured
+// too, but it is the same fixed CtrlC + shutdown each iteration, so it adds a
+// constant offset rather than noise that would mask a regression.
 
 // BenchmarkLaunch measures cold launch to first render: start the program and
 // wait for the seeded list to render, then tear it down. Each iteration is a
 // full bootstrap (Init load + first frames) through the in-memory terminal.
+// Teardown is excluded from the timer so only launch-to-first-render is measured.
 func BenchmarkLaunch(b *testing.B) {
-	stubFetchBench(b)
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		tm := newSeededProgram(b)
 		waitForBench(b, tm, "first issue alpha")
 		b.StopTimer()
-		tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-		tm.WaitFinished(b, teatest.WithFinalTimeout(benchFinalTimeout))
+		quitBench(b, tm)
 		b.StartTimer()
 	}
 }
 
 // BenchmarkTransitionListDetail measures the round trip list -> detail -> list
-// driven end-to-end through the running program. Setup (launch + initial list
-// render) is excluded from the timer; only the transition waits are timed.
+// driven end-to-end through the running program. The "back to list" wait uses
+// "second issue beta" (a different item) as the sentinel: it never appears in
+// the single-item detail view, so seeing it proves the list re-rendered.
 func BenchmarkTransitionListDetail(b *testing.B) {
-	stubFetchBench(b)
-	tm := newSeededProgram(b)
-	waitForBench(b, tm, "first issue alpha")
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		tm := newSeededProgram(b)
+		waitForBench(b, tm, "first issue alpha")
 		tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 		waitForBench(b, tm, "#11 first issue alpha")
 		tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
 		waitForBench(b, tm, "second issue beta")
+		quitBench(b, tm)
 	}
-	b.StopTimer()
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-	tm.WaitFinished(b, teatest.WithFinalTimeout(benchFinalTimeout))
 }
 
 // BenchmarkTransitionHelpOverlay measures opening and closing the shortcuts
 // overlay end-to-end.
 func BenchmarkTransitionHelpOverlay(b *testing.B) {
-	stubFetchBench(b)
-	tm := newSeededProgram(b)
-	waitForBench(b, tm, "first issue alpha")
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		tm := newSeededProgram(b)
+		waitForBench(b, tm, "first issue alpha")
 		tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
 		waitForBench(b, tm, "Keyboard shortcuts")
 		tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
 		waitForBench(b, tm, "first issue alpha")
+		quitBench(b, tm)
 	}
-	b.StopTimer()
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-	tm.WaitFinished(b, teatest.WithFinalTimeout(benchFinalTimeout))
 }
 
 // BenchmarkTransitionFilter measures applying a filter end-to-end: open filter,
-// type a query that narrows the list, then clear it.
+// type a query that narrows the list, then clear it. The "back to list" wait
+// uses "first issue alpha" — the row filtered out by "beta" — so its reappearance
+// proves the filter was cleared and the full list re-rendered.
 func BenchmarkTransitionFilter(b *testing.B) {
-	stubFetchBench(b)
-	tm := newSeededProgram(b)
-	waitForBench(b, tm, "first issue alpha")
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		tm := newSeededProgram(b)
+		waitForBench(b, tm, "first issue alpha")
 		tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 		tm.Type("beta")
 		waitForBench(b, tm, "second issue beta")
 		tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
 		waitForBench(b, tm, "first issue alpha")
+		quitBench(b, tm)
 	}
-	b.StopTimer()
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-	tm.WaitFinished(b, teatest.WithFinalTimeout(benchFinalTimeout))
 }
