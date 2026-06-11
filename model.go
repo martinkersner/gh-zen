@@ -810,11 +810,12 @@ func (m model) renderList() string {
 	// Tabs
 	b += m.renderTabs() + "\n"
 
-	// Error / Loading still show the bar so quit help is always visible.
+	// Errors still take over the body. Loading is surfaced solely by the
+	// status-bar indicator (see renderStatusBar) and the tab "(?)" counts, so
+	// the list stays visible during refreshes instead of being replaced by a
+	// top-of-screen "Loading..." line.
 	if m.err != nil {
 		b += fmt.Sprintf("Error: %v\n", m.err)
-	} else if m.loading {
-		b += "Loading..."
 	} else {
 		b += m.currentList().View()
 	}
