@@ -117,7 +117,7 @@ type model struct {
 
 func newModel() model {
 	m := model{
-		tabs:      []string{"Issues", "Pull Requests"},
+		tabs:      []string{"Issues", "PRs"},
 		activeTab: tabIssues,
 		loading:   true,
 		bodyCache: make(map[string]string),
