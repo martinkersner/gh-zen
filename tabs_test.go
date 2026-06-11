@@ -34,8 +34,8 @@ func TestTabCountsAfterFetch(t *testing.T) {
 	if !strings.Contains(tabs, "Issues (2)") {
 		t.Errorf("tabs missing %q: %q", "Issues (2)", tabs)
 	}
-	if !strings.Contains(tabs, "Pull Requests (1)") {
-		t.Errorf("tabs missing %q: %q", "Pull Requests (1)", tabs)
+	if !strings.Contains(tabs, "PRs (1)") {
+		t.Errorf("tabs missing %q: %q", "PRs (1)", tabs)
 	}
 }
 
