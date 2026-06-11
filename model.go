@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -106,6 +107,16 @@ type model struct {
 	detailItem     *item
 	detailBody     string
 	detailViewport viewport.Model
+
+	// In-detail search (editor-style find within the open detail body).
+	// detailSearching is true while the user is typing/navigating a query;
+	// detailQuery is the live query; detailMatches are all occurrences in the
+	// wrapped body in reading order; detailActiveMatch indexes the highlighted
+	// (current) match within detailMatches.
+	detailSearching   bool
+	detailQuery       string
+	detailMatches     []searchMatch
+	detailActiveMatch int
 
 	// Cache: "issue_42" or "pr_7" -> body
 	bodyCache map[string]string
@@ -231,13 +242,52 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if m.detailOpen {
+			// ctrl+c always quits, even mid-search.
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+
+			// In-detail search mode: typing builds the query, esc exits and
+			// clears the highlight, and ctrl+n/ctrl+p jump between matches
+			// instead of scrolling one line.
+			if m.detailSearching {
+				switch msg.Type {
+				case tea.KeyEsc:
+					m.exitDetailSearch()
+					return m, nil
+				case tea.KeyCtrlN:
+					m.jumpDetailMatch(true)
+					return m, nil
+				case tea.KeyCtrlP:
+					m.jumpDetailMatch(false)
+					return m, nil
+				case tea.KeyBackspace:
+					if r := []rune(m.detailQuery); len(r) > 0 {
+						m.detailQuery = string(r[:len(r)-1])
+						m.refreshDetailSearch()
+					}
+					return m, nil
+				case tea.KeyRunes, tea.KeySpace:
+					m.detailQuery += string(msg.Runes)
+					m.refreshDetailSearch()
+					return m, nil
+				}
+				// Any other key (arrows, pgup/pgdn) still scrolls the viewport
+				// while keeping the search query and highlight intact.
+				var cmd tea.Cmd
+				m.detailViewport, cmd = m.detailViewport.Update(msg)
+				return m, cmd
+			}
+
 			switch msg.String() {
 			case "esc", "q":
 				m.detailOpen = false
 				m.detailItem = nil
+				m.exitDetailSearch()
 				return m, nil
-			case "ctrl+c":
-				return m, tea.Quit
+			case "/":
+				m.enterDetailSearch()
+				return m, nil
 			case "ctrl+n":
 				m.detailViewport.ScrollDown(1)
 				return m, nil
@@ -341,6 +391,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			offset := m.detailViewport.YOffset
 			m.detailBody = m.cachedBody(m.detailItem)
 			m.detailLoading = false
+			// Re-locate matches against the (possibly changed) body so the
+			// highlight stays valid; clamp the active match if the count shrank.
+			m.recomputeDetailMatches()
 			m.detailViewport.SetContent(m.detailBodyContent())
 			m.detailViewport.SetYOffset(offset)
 		}
@@ -395,15 +448,136 @@ func detailViewportSize(width, height int) (int, int) {
 	return w, h
 }
 
-// detailBodyContent returns the body text (or a loading placeholder) wrapped to
-// the viewport width.
-func (m model) detailBodyContent() string {
+// detailMatchStyle / detailActiveMatchStyle style search hits in the detail
+// body: every match gets the muted highlight, the current (active) match a
+// brighter one so it stands out as ctrl+n/ctrl+p step through occurrences.
+var (
+	detailMatchStyle       = lipgloss.NewStyle().Background(lipgloss.Color("#3b4261")).Foreground(lipgloss.Color("#c0caf5"))
+	detailActiveMatchStyle = lipgloss.NewStyle().Background(lipgloss.Color("#e0af68")).Foreground(lipgloss.Color("#1a1b26")).Bold(true)
+)
+
+// detailWrappedLines returns the detail body (or a loading placeholder) wrapped
+// to the viewport width, split into individual lines. The same wrapping is used
+// both to render the viewport content and to locate search matches, so match
+// line/column offsets line up exactly with what's displayed.
+func (m model) detailWrappedLines() []string {
 	body := m.detailBody
 	if m.detailLoading {
 		body = "Loading body..."
 	}
 	w, _ := detailViewportSize(m.width, m.height)
-	return lipgloss.NewStyle().Width(w).Render(body)
+	wrapped := lipgloss.NewStyle().Width(w).Render(body)
+	return strings.Split(wrapped, "\n")
+}
+
+// detailBodyContent returns the viewport content for the detail body. When an
+// in-detail search query is active, every match is highlighted and the active
+// match is styled distinctly; otherwise the wrapped body is returned verbatim.
+func (m model) detailBodyContent() string {
+	lines := m.detailWrappedLines()
+	if len(m.detailMatches) == 0 {
+		return strings.Join(lines, "\n")
+	}
+	// Group matches by line, marking the active match so it can be styled
+	// distinctly from the rest.
+	type runHL struct {
+		start, length int
+		active        bool
+	}
+	byLine := make(map[int][]runHL)
+	for i, mt := range m.detailMatches {
+		byLine[mt.line] = append(byLine[mt.line], runHL{start: mt.startCol, length: mt.length, active: i == m.detailActiveMatch})
+	}
+	for li, hls := range byLine {
+		if li < 0 || li >= len(lines) {
+			continue
+		}
+		var normal, active []int
+		for _, h := range hls {
+			for k := 0; k < h.length; k++ {
+				if h.active {
+					active = append(active, h.start+k)
+				} else {
+					normal = append(normal, h.start+k)
+				}
+			}
+		}
+		line := lines[li]
+		if len(normal) > 0 {
+			line = lipgloss.StyleRunes(line, normal, detailMatchStyle, lipgloss.NewStyle())
+		}
+		if len(active) > 0 {
+			line = lipgloss.StyleRunes(line, active, detailActiveMatchStyle, lipgloss.NewStyle())
+		}
+		lines[li] = line
+	}
+	return strings.Join(lines, "\n")
+}
+
+// enterDetailSearch starts in-detail search mode with an empty query.
+func (m *model) enterDetailSearch() {
+	m.detailSearching = true
+	m.detailQuery = ""
+	m.detailMatches = nil
+	m.detailActiveMatch = 0
+}
+
+// exitDetailSearch leaves search mode and clears the query/highlight, restoring
+// the plain body. The viewport scroll position is preserved.
+func (m *model) exitDetailSearch() {
+	m.detailSearching = false
+	m.detailQuery = ""
+	m.detailMatches = nil
+	m.detailActiveMatch = 0
+	offset := m.detailViewport.YOffset
+	m.detailViewport.SetContent(m.detailBodyContent())
+	m.detailViewport.SetYOffset(offset)
+}
+
+// refreshDetailSearch recomputes matches for the current query against the
+// wrapped body, resets the active match to the first hit, re-renders the
+// highlighted content, and scrolls to the active match so the user sees a hit as
+// they type.
+func (m *model) refreshDetailSearch() {
+	m.detailMatches = findMatches(m.detailWrappedLines(), m.detailQuery)
+	m.detailActiveMatch = 0
+	offset := m.detailViewport.YOffset
+	m.detailViewport.SetContent(m.detailBodyContent())
+	if len(m.detailMatches) == 0 {
+		m.detailViewport.SetYOffset(offset)
+		return
+	}
+	m.scrollToActiveMatch()
+}
+
+// jumpDetailMatch advances the active match to the next (forward) or previous
+// match, wrapping around, re-renders so the new active match is styled, and
+// scrolls it into view. A no-op when there are no matches.
+func (m *model) jumpDetailMatch(forward bool) {
+	n := len(m.detailMatches)
+	if n == 0 {
+		return
+	}
+	if forward {
+		m.detailActiveMatch = nextMatchIndex(m.detailActiveMatch, n)
+	} else {
+		m.detailActiveMatch = prevMatchIndex(m.detailActiveMatch, n)
+	}
+	m.detailViewport.SetContent(m.detailBodyContent())
+	m.scrollToActiveMatch()
+}
+
+// scrollToActiveMatch scrolls the viewport just enough to bring the active
+// match's line into view, leaving the offset unchanged when it's already
+// visible.
+func (m *model) scrollToActiveMatch() {
+	if m.detailActiveMatch < 0 || m.detailActiveMatch >= len(m.detailMatches) {
+		return
+	}
+	line := m.detailMatches[m.detailActiveMatch].line
+	maxOffset := m.detailViewport.TotalLineCount() - m.detailViewport.Height
+	offset := scrollOffsetFor(line, m.detailViewport.YOffset, m.detailViewport.Height, maxOffset)
+	m.detailViewport.SetYOffset(offset)
 }
 
 // openDetailViewport sizes the detail viewport, loads the current body, and
@@ -424,7 +598,26 @@ func (m *model) resizeDetailViewport() {
 	w, h := detailViewportSize(m.width, m.height)
 	m.detailViewport.Width = w
 	m.detailViewport.Height = h
+	// Re-wrapping at the new width moves match line/column offsets, so recompute
+	// them before re-rendering the highlighted content.
+	m.recomputeDetailMatches()
 	m.detailViewport.SetContent(m.detailBodyContent())
+}
+
+// recomputeDetailMatches re-locates the current query's matches against the
+// freshly wrapped body and clamps the active match index to the new count. A
+// no-op when not searching. Used after the body or wrap width changes so the
+// highlight stays aligned with what's rendered.
+func (m *model) recomputeDetailMatches() {
+	if !m.detailSearching || m.detailQuery == "" {
+		m.detailMatches = nil
+		m.detailActiveMatch = 0
+		return
+	}
+	m.detailMatches = findMatches(m.detailWrappedLines(), m.detailQuery)
+	if m.detailActiveMatch >= len(m.detailMatches) {
+		m.detailActiveMatch = 0
+	}
 }
 
 func (m model) selectedItem() *item {
@@ -495,7 +688,19 @@ func (m model) renderStatusBar() string {
 			kind = "Pull Request"
 		}
 		left = kind
-		hints = "q/esc back · ctrl+n/ctrl+p scroll · r refresh"
+		hints = "q/esc back · ctrl+n/ctrl+p scroll · / search · r refresh"
+		// In search mode, surface the live query and match position, and switch
+		// the hints to reflect that ctrl+n/ctrl+p now jump between matches.
+		if m.detailSearching {
+			if n := len(m.detailMatches); n > 0 {
+				left = fmt.Sprintf("%s · search: %s (%d/%d)", kind, m.detailQuery, m.detailActiveMatch+1, n)
+			} else if m.detailQuery != "" {
+				left = fmt.Sprintf("%s · search: %s (no matches)", kind, m.detailQuery)
+			} else {
+				left = fmt.Sprintf("%s · search:", kind)
+			}
+			hints = "esc cancel · ctrl+n/ctrl+p next/prev match"
+		}
 	} else {
 		mode := "Issues"
 		if m.activeTab == tabPRs {
