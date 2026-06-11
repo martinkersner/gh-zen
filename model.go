@@ -278,7 +278,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "ctrl+c":
 				return m, tea.Quit
-			case "?", "esc", "q":
+			case "?", "esc":
 				m.showHelp = false
 			}
 			return m, nil

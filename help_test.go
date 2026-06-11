@@ -118,3 +118,22 @@ func TestHelpOverlayNotOpenedWhileFiltering(t *testing.T) {
 		t.Error("? while filtering must not open the overlay")
 	}
 }
+
+// While in-detail search, `?` is a literal query character and must not open the
+// overlay; it appends to the live query instead.
+func TestHelpOverlayNotOpenedWhileDetailSearching(t *testing.T) {
+	m := openDetailWithBody(t, "alpha beta", 80, 24)
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	if !tm.(model).detailSearching {
+		t.Fatal("setup: not in detail search mode")
+	}
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	mm := tm.(model)
+	if mm.showHelp {
+		t.Error("? while in-detail search must not open the overlay")
+	}
+	if mm.detailQuery != "?" {
+		t.Errorf("? should append to the search query, got %q", mm.detailQuery)
+	}
+}
