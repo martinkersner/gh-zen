@@ -804,9 +804,10 @@ func (m model) renderList() string {
 }
 
 // renderStatusBar renders the one-line bar pinned to the bottom of the screen.
-// The left side shows context (current mode, or the active filter query when
-// filtering); the right side shows context-aware key hints. It is rendered in
-// both the list and detail views.
+// In the list view the left side shows the active filter query when filtering
+// (otherwise it is empty — the mode is conveyed by the tabs row above); in the
+// detail view it shows the item kind. The right side shows context-aware key
+// hints. It is rendered in both the list and detail views.
 func (m model) renderStatusBar() string {
 	leftStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Bold(true)
 	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
@@ -828,11 +829,10 @@ func (m model) renderStatusBar() string {
 			left = searchBarLeft(m.detailQuery, true)
 		}
 	} else {
-		mode := "Issues"
-		if m.activeTab == tabPRs {
-			mode = "PRs"
-		}
-		left = mode
+		// The bare mode word ("Issues"/"PRs") is redundant with the tabs row
+		// (renderTabs) directly above, which already shows `Issues (N)` / `PRs (N)`
+		// and highlights the active one — so the left side stays empty unless a
+		// filter is active.
 		// Surface the filter query so the user can see what they typed. While
 		// typing (Filtering) the list's built-in input is hidden, so render the
 		// live, editable value here even when empty — that makes the bar the one
