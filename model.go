@@ -351,21 +351,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateListSize() {
-	listHeight := m.height - 3
+	// Reserve the tabs row + blank line above the list, plus the status bar row
+	// pinned to the bottom, so neither overlaps the scrollable list.
+	listHeight := m.height - 3 - statusBarHeight
 	m.issueList.SetSize(m.width, listHeight)
 	m.prList.SetSize(m.width, listHeight)
 }
 
 // detailViewportSize computes the width/height for the detail body viewport
 // from the terminal size, reserving detailHeaderHeight lines for the title and
-// meta. Heights/widths are clamped to a minimum of 1 so tiny terminals don't
-// produce negative dimensions.
+// meta plus statusBarHeight for the bottom status bar. Heights/widths are
+// clamped to a minimum of 1 so tiny terminals don't produce negative dimensions.
 func detailViewportSize(width, height int) (int, int) {
 	w := width - 2
 	if w < 1 {
 		w = 1
 	}
-	h := height - detailHeaderHeight
+	h := height - detailHeaderHeight - statusBarHeight
 	if h < 1 {
 		h = 1
 	}
@@ -443,23 +445,66 @@ func (m model) renderList() string {
 	// Tabs
 	b += m.renderTabs() + "\n\n"
 
-	// Error
+	// Error / Loading still show the bar so quit help is always visible.
 	if m.err != nil {
 		b += fmt.Sprintf("Error: %v\n", m.err)
-		return b
-	}
-
-	// Loading
-	if m.loading {
+	} else if m.loading {
 		b += "Loading..."
-		return b
+	} else {
+		b += m.currentList().View()
 	}
 
-	// List
-	cur := m.currentList()
-	b += cur.View()
+	b += "\n" + m.renderStatusBar()
 
 	return b
+}
+
+// renderStatusBar renders the one-line bar pinned to the bottom of the screen.
+// The left side shows context (current mode, or the active filter query when
+// filtering); the right side shows context-aware key hints. It is rendered in
+// both the list and detail views.
+func (m model) renderStatusBar() string {
+	leftStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Bold(true)
+	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
+
+	var left, hints string
+	if m.detailOpen {
+		kind := "Issue"
+		if m.detailItem != nil && m.detailItem.type_ == "pr" {
+			kind = "Pull Request"
+		}
+		left = kind
+		hints = "q/esc back · ctrl+n/ctrl+p scroll · r refresh"
+	} else {
+		mode := "Issues"
+		if m.activeTab == tabPRs {
+			mode = "Pull Requests"
+		}
+		left = mode
+		// Surface the active filter query so the user can see what they typed.
+		cur := m.currentList()
+		switch cur.FilterState() {
+		case list.Filtering, list.FilterApplied:
+			if q := cur.FilterValue(); q != "" {
+				left = fmt.Sprintf("%s · filter: %s", mode, q)
+			}
+		}
+		hints = "q/esc quit · tab switch · / filter · enter open"
+	}
+
+	left = leftStyle.Render(left)
+	hints = hintStyle.Render(hints)
+
+	// Lay the hints out flush-right, padding the gap to the terminal width. When
+	// the two halves don't fit, join them with a single space and truncate to
+	// the terminal width so the bar never wraps onto a second row (which would
+	// overflow the single reserved status-bar line).
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(hints)
+	if gap < 1 {
+		bar := lipgloss.JoinHorizontal(lipgloss.Left, left, " ", hints)
+		return ansi.Truncate(bar, m.width, "…")
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Left, left, lipgloss.NewStyle().Width(gap).Render(""), hints)
 }
 
 func (m model) renderTabs() string {
@@ -496,9 +541,9 @@ func (m model) renderDetail() string {
 	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89")).MarginBottom(1)
 
 	title := titleStyle.Render(fmt.Sprintf("#%d %s", m.detailItem.number, m.detailItem.title))
-	meta := metaStyle.Render(fmt.Sprintf("[%s]  (esc/q to close)", m.detailItem.type_))
+	meta := metaStyle.Render(fmt.Sprintf("[%s]", m.detailItem.type_))
 
-	return lipgloss.JoinVertical(lipgloss.Left, title, meta, m.detailViewport.View())
+	return lipgloss.JoinVertical(lipgloss.Left, title, meta, m.detailViewport.View(), m.renderStatusBar())
 }
 
 func cacheKey(it *item) string {
