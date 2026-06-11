@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -11,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	gh "github.com/cli/go-gh/v2"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/cli/go-gh/v2/pkg/repository"
 )
@@ -108,6 +110,13 @@ type model struct {
 	detailBody     string
 	detailViewport viewport.Model
 
+	// Diff sub-view of the detail pane (PRs only). detailShowDiff toggles the
+	// viewport between the body and the PR's diff; detailDiffLoading mirrors
+	// detailLoading for the lazily-fetched diff.
+	detailShowDiff    bool
+	detailDiff        string
+	detailDiffLoading bool
+
 	// In-detail search (editor-style find within the open detail body).
 	// detailSearching is true while the user is typing/navigating a query;
 	// detailQuery is the live query; detailMatches are all occurrences in the
@@ -120,6 +129,8 @@ type model struct {
 
 	// Cache: "issue_42" or "pr_7" -> body
 	bodyCache map[string]string
+	// Cache: "pr_7" -> diff text (PRs only)
+	diffCache map[string]string
 
 	// Async state
 	loading bool
@@ -132,6 +143,7 @@ func newModel() model {
 		activeTab: tabIssues,
 		loading:   true,
 		bodyCache: make(map[string]string),
+		diffCache: make(map[string]string),
 		issueList: list.New([]list.Item{}, newItemDelegate(), 0, 0),
 		prList:    list.New([]list.Item{}, newItemDelegate(), 0, 0),
 	}
@@ -175,6 +187,11 @@ func (m *model) currentList() *list.Model {
 // on a same-item refresh).
 func (m model) refreshCurrentView() tea.Cmd {
 	if m.detailOpen && m.detailItem != nil {
+		// In the PR diff sub-view, refresh the diff rather than the body so the
+		// visible content is what actually gets updated.
+		if m.detailShowDiff {
+			return m.cmdFetchDiff(m.detailItem)
+		}
 		return m.cmdFetchBody(m.detailItem)
 	}
 	return fetchIssuesAndPRs()
@@ -288,6 +305,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc", "q":
 				m.detailOpen = false
 				m.detailItem = nil
+				m.detailShowDiff = false
 				m.exitDetailSearch()
 				return m, nil
 			case "/":
@@ -298,6 +316,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "ctrl+p":
 				m.detailViewport.ScrollUp(1)
+				return m, nil
+			case "d":
+				// Toggle between the body and the PR diff. No-op for issues,
+				// which have no diff. Lazy-fetch the diff on first toggle.
+				if m.detailItem != nil && m.detailItem.type_ == "pr" {
+					return m.toggleDiff()
+				}
 				return m, nil
 			case "r":
 				return m, m.refreshCurrentView()
@@ -342,6 +367,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if it != nil {
 				m.detailOpen = true
 				m.detailItem = it
+				m.detailShowDiff = false
 				m.detailBody = m.cachedBody(it)
 				m.detailLoading = m.detailBody == ""
 				m.openDetailViewport()
@@ -396,11 +422,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			offset := m.detailViewport.YOffset
 			m.detailBody = m.cachedBody(m.detailItem)
 			m.detailLoading = false
-			// Re-locate matches against the (possibly changed) body so the
-			// highlight stays valid; clamp the active match if the count shrank.
-			m.recomputeDetailMatches()
-			m.detailViewport.SetContent(m.detailBodyContent())
-			m.detailViewport.SetYOffset(offset)
+			if !m.detailShowDiff {
+				// Re-locate matches against the (possibly changed) body so the
+				// highlight stays valid; clamp the active match if the count shrank.
+				m.recomputeDetailMatches()
+				m.detailViewport.SetContent(m.detailContent())
+				m.detailViewport.SetYOffset(offset)
+			}
+		}
+
+	case diffMsg:
+		if msg.err != nil {
+			// A failed diff fetch clears the loading state; if the diff view is
+			// open it falls back to showing the fetch error in place of the diff.
+			if m.detailOpen && m.detailItem != nil && cacheKey(m.detailItem) == msg.key {
+				m.detailDiffLoading = false
+				if m.detailShowDiff {
+					m.detailDiff = fmt.Sprintf("Error loading diff: %v", msg.err)
+					m.detailViewport.SetContent(m.detailContent())
+				}
+			}
+			break
+		}
+		m.diffCache[msg.key] = msg.diff
+		if m.detailOpen && m.detailItem != nil && cacheKey(m.detailItem) == msg.key {
+			m.detailDiff = msg.diff
+			m.detailDiffLoading = false
+			if m.detailShowDiff {
+				// Preserve scroll position so an auto/manual refresh of an already
+				// open diff doesn't yank the viewport back to the top. On the first
+				// toggle the offset is already 0, so this still opens at the top.
+				offset := m.detailViewport.YOffset
+				m.detailViewport.SetContent(m.detailContent())
+				m.detailViewport.SetYOffset(offset)
+			}
 		}
 
 	case errMsg:
@@ -601,6 +656,25 @@ func (m *model) scrollToActiveMatch() {
 	m.detailViewport.SetYOffset(offset)
 }
 
+// detailContent returns the content currently shown in the detail viewport:
+// the PR diff when the diff sub-view is toggled on, otherwise the body.
+func (m model) detailContent() string {
+	if m.detailShowDiff {
+		return m.detailDiffContent()
+	}
+	return m.detailBodyContent()
+}
+
+// detailDiffContent returns the PR diff (or a loading placeholder) with added/
+// removed lines colored, wrapped to the viewport width.
+func (m model) detailDiffContent() string {
+	if m.detailDiffLoading {
+		w, _ := detailViewportSize(m.width, m.height)
+		return lipgloss.NewStyle().Width(w).Render("Loading diff...")
+	}
+	return colorizeDiff(m.detailDiff)
+}
+
 // openDetailViewport sizes the detail viewport, loads the current body, and
 // anchors it at the top so the title is always visible when a detail view opens.
 func (m *model) openDetailViewport() {
@@ -609,7 +683,7 @@ func (m *model) openDetailViewport() {
 	// Add j/k as scroll aliases alongside the default arrow/pgup/pgdn keys.
 	m.detailViewport.KeyMap.Up.SetKeys(append(m.detailViewport.KeyMap.Up.Keys(), "k")...)
 	m.detailViewport.KeyMap.Down.SetKeys(append(m.detailViewport.KeyMap.Down.Keys(), "j")...)
-	m.detailViewport.SetContent(m.detailBodyContent())
+	m.detailViewport.SetContent(m.detailContent())
 	m.detailViewport.GotoTop()
 }
 
@@ -622,7 +696,7 @@ func (m *model) resizeDetailViewport() {
 	// Re-wrapping at the new width moves match line/column offsets, so recompute
 	// them before re-rendering the highlighted content.
 	m.recomputeDetailMatches()
-	m.detailViewport.SetContent(m.detailBodyContent())
+	m.detailViewport.SetContent(m.detailContent())
 }
 
 // recomputeDetailMatches re-locates the current query's matches against the
@@ -705,11 +779,20 @@ func (m model) renderStatusBar() string {
 	var left, hints string
 	if m.detailOpen {
 		kind := "Issue"
-		if m.detailItem != nil && m.detailItem.type_ == "pr" {
+		isPR := m.detailItem != nil && m.detailItem.type_ == "pr"
+		if isPR {
 			kind = "Pull Request"
 		}
 		left = kind
 		hints = "q/esc back · ctrl+n/ctrl+p scroll · / search · r refresh"
+		// PRs gain a key to toggle between the body and the diff view.
+		if isPR {
+			verb := "diff"
+			if m.detailShowDiff {
+				verb = "body"
+			}
+			hints = fmt.Sprintf("q/esc back · ctrl+n/ctrl+p scroll · d %s · / search · r refresh", verb)
+		}
 		// In search mode, surface the live query and match position, and switch
 		// the hints to reflect that ctrl+n/ctrl+p now jump between matches.
 		if m.detailSearching {
@@ -806,9 +889,9 @@ func (m model) cmdPrefetchBody(it *item) tea.Cmd {
 	}
 }
 
-// cmdFetchBody re-fetches the focused item's content from GitHub. Today the
-// detail view shows only the body, so that's all we pull; once PR diffs land
-// (#15) the diff fetch can be slotted in here alongside the body fetch.
+// cmdFetchBody re-fetches the focused item's content (the body) from GitHub. PR
+// diffs are fetched separately (cmdFetchDiff) since they aren't part of the
+// GraphQL body query and are only pulled when the diff sub-view is opened.
 func (m model) cmdFetchBody(it *item) tea.Cmd {
 	key := cacheKey(it)
 	number := it.number
@@ -819,6 +902,45 @@ func (m model) cmdFetchBody(it *item) tea.Cmd {
 			return bodyMsg{key: key, err: err}
 		}
 		return bodyMsg{key: key, body: body}
+	}
+}
+
+// toggleDiff flips the detail viewport between the body and the PR diff for the
+// focused PR. The diff is lazily fetched and cached on first view (mirroring the
+// body cache); subsequent toggles reuse the cache. The viewport is re-anchored
+// at the top so the start of the newly-shown content is visible.
+func (m model) toggleDiff() (tea.Model, tea.Cmd) {
+	m.detailShowDiff = !m.detailShowDiff
+	if !m.detailShowDiff {
+		m.detailViewport.SetContent(m.detailContent())
+		m.detailViewport.GotoTop()
+		return m, nil
+	}
+	// Showing the diff: use the cache if present, otherwise fetch it.
+	if cached, ok := m.diffCache[cacheKey(m.detailItem)]; ok {
+		m.detailDiff = cached
+		m.detailDiffLoading = false
+		m.detailViewport.SetContent(m.detailContent())
+		m.detailViewport.GotoTop()
+		return m, nil
+	}
+	m.detailDiffLoading = true
+	m.detailViewport.SetContent(m.detailContent())
+	m.detailViewport.GotoTop()
+	return m, m.cmdFetchDiff(m.detailItem)
+}
+
+// cmdFetchDiff fetches the focused PR's diff. Kept off the body path because the
+// diff isn't part of the GraphQL query; it's pulled on demand via fetchDiff.
+func (m model) cmdFetchDiff(it *item) tea.Cmd {
+	key := cacheKey(it)
+	number := it.number
+	return func() tea.Msg {
+		diff, err := fetchDiff(number)
+		if err != nil {
+			return diffMsg{key: key, err: err}
+		}
+		return diffMsg{key: key, diff: diff}
 	}
 }
 
@@ -835,13 +957,19 @@ type bodyMsg struct {
 	err  error
 }
 
+type diffMsg struct {
+	key  string
+	diff string
+	err  error
+}
+
 type errMsg struct {
 	err error
 }
 
 // fetchBody pulls the current body for a single issue or PR from GitHub. It is a
 // blocking call meant to run inside a tea.Cmd. Kept separate from the list fetch
-// so the detail refresh path can grow (e.g. PR diffs, #15) independently.
+// so the detail diff (fetchDiff) can grow independently.
 func fetchBody(number int, isPR bool) (string, error) {
 	client, err := api.DefaultGraphQLClient()
 	if err != nil {
@@ -889,6 +1017,53 @@ func fetchBody(number int, isPR bool) (string, error) {
 		return resp.Repository.PullRequest.Body, nil
 	}
 	return resp.Repository.Issue.Body, nil
+}
+
+// ghDiff shells out to `gh pr diff <number>` and returns its stdout. It is a
+// package var so tests can stub the network/`gh` call and keep the diff plumbing
+// hermetic.
+var ghDiff = func(number int) (string, error) {
+	stdout, stderr, err := gh.Exec("pr", "diff", strconv.Itoa(number))
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return "", fmt.Errorf("%s: %w", msg, err)
+		}
+		return "", err
+	}
+	return stdout.String(), nil
+}
+
+// fetchDiff pulls a single PR's diff from GitHub via `gh pr diff`. It is a
+// blocking call meant to run inside a tea.Cmd.
+func fetchDiff(number int) (string, error) {
+	return ghDiff(number)
+}
+
+// colorizeDiff applies green/red foreground colors to added/removed diff lines
+// (leaving hunk headers and context lines unstyled) so the diff is readable in
+// the detail viewport. Plain-text rendering is the fallback when the input has
+// no recognizable diff markers.
+func colorizeDiff(diff string) string {
+	if diff == "" {
+		return ""
+	}
+	addStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#9ece6a"))
+	delStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#f7768e"))
+	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7"))
+	lines := strings.Split(diff, "\n")
+	for i, ln := range lines {
+		switch {
+		case strings.HasPrefix(ln, "+++") || strings.HasPrefix(ln, "---"):
+			lines[i] = metaStyle.Render(ln)
+		case strings.HasPrefix(ln, "@@"):
+			lines[i] = metaStyle.Render(ln)
+		case strings.HasPrefix(ln, "+"):
+			lines[i] = addStyle.Render(ln)
+		case strings.HasPrefix(ln, "-"):
+			lines[i] = delStyle.Render(ln)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func fetchIssuesAndPRs() tea.Cmd {
