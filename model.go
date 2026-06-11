@@ -997,6 +997,40 @@ func (m model) cmdFetchDiff(it *item) tea.Cmd {
 
 // --- GitHub integration ---
 
+// graphQLClient is the minimal slice of *api.GraphQLClient the fetch layer
+// actually uses: a single Do(query, variables, &response) call. Depending on
+// this interface (rather than the concrete client) lets tests inject a fake
+// that returns canned responses/errors so the query-building and
+// response-parsing logic can be exercised fully offline.
+type graphQLClient interface {
+	Do(query string, variables map[string]interface{}, response interface{}) error
+}
+
+// repoInfo is the resolved owner/name of the repository the fetch layer queries
+// against. It mirrors the fields used from repository.Repository so tests can
+// supply a fixed repo without reading `gh` config / resolving a git remote.
+type repoInfo struct {
+	Owner string
+	Name  string
+}
+
+// newGraphQLClient and currentRepo are the injection seams for the GitHub I/O
+// layer. Production wires the real client/repo resolution (api default client,
+// repository.Current); tests swap them for fakes returning canned data/errors.
+// Kept as package vars to match the existing fetchIssuesAndPRs/ghDiff pattern.
+var (
+	newGraphQLClient = func() (graphQLClient, error) {
+		return api.DefaultGraphQLClient()
+	}
+	currentRepo = func() (repoInfo, error) {
+		repo, err := repository.Current()
+		if err != nil {
+			return repoInfo{}, err
+		}
+		return repoInfo{Owner: repo.Owner, Name: repo.Name}, nil
+	}
+)
+
 type dataMsg struct {
 	issues []list.Item
 	prs    []list.Item
@@ -1022,11 +1056,11 @@ type errMsg struct {
 // blocking call meant to run inside a tea.Cmd. Kept separate from the list fetch
 // so the detail diff (fetchDiff) can grow independently.
 func fetchBody(number int, isPR bool) (string, error) {
-	client, err := api.DefaultGraphQLClient()
+	client, err := newGraphQLClient()
 	if err != nil {
 		return "", err
 	}
-	repo, err := repository.Current()
+	repo, err := currentRepo()
 	if err != nil {
 		return "", err
 	}
@@ -1122,12 +1156,12 @@ func colorizeDiff(diff string) string {
 // and drive the program offline without hitting the network.
 var fetchIssuesAndPRs = func() tea.Cmd {
 	return func() tea.Msg {
-		client, err := api.DefaultGraphQLClient()
+		client, err := newGraphQLClient()
 		if err != nil {
 			return errMsg{err}
 		}
 
-		repo, err := repository.Current()
+		repo, err := currentRepo()
 		if err != nil {
 			return errMsg{err}
 		}
