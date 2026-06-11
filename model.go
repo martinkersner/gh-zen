@@ -811,28 +811,21 @@ func (m model) renderStatusBar() string {
 	leftStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Bold(true)
 	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
 
-	var left, hints string
+	// The full shortcut list now lives in the `?` overlay (see renderHelp); the
+	// bar shows only the compact hint so it stays uncluttered — identical in
+	// every view/mode, including while searching.
+	left, hints := "", helpHint
 	if m.detailOpen {
 		kind := "Issue"
-		isPR := m.detailItem != nil && m.detailItem.type_ == "pr"
-		if isPR {
+		if m.detailItem != nil && m.detailItem.type_ == "pr" {
 			kind = "Pull Request"
 		}
 		left = kind
-		// The full shortcut list now lives in the `?` overlay (see renderHelp);
-		// the bar shows only the compact hint so it stays uncluttered.
-		hints = helpHint
-		// In search mode, surface the live query and match position, and switch
-		// the hints to reflect that ctrl+n/ctrl+p now jump between matches.
+		// In-detail search renders identically to the list filter: the shared
+		// searchBarLeft helper is the single source of truth for the `/ <q>`
+		// display, so there is no per-view query format.
 		if m.detailSearching {
-			if n := len(m.detailMatches); n > 0 {
-				left = fmt.Sprintf("%s · search: %s (%d/%d)", kind, m.detailQuery, m.detailActiveMatch+1, n)
-			} else if m.detailQuery != "" {
-				left = fmt.Sprintf("%s · search: %s (no matches)", kind, m.detailQuery)
-			} else {
-				left = fmt.Sprintf("%s · search:", kind)
-			}
-			hints = "esc cancel · ctrl+n/ctrl+p next/prev match"
+			left = searchBarLeft(m.detailQuery, true)
 		}
 	} else {
 		mode := "Issues"
@@ -847,19 +840,12 @@ func (m model) renderStatusBar() string {
 		cur := m.currentList()
 		switch cur.FilterState() {
 		case list.Filtering:
-			if q := cur.FilterValue(); q != "" {
-				left = fmt.Sprintf("/ %s", q)
-			} else {
-				left = "/"
-			}
+			left = searchBarLeft(cur.FilterValue(), true)
 		case list.FilterApplied:
 			if q := cur.FilterValue(); q != "" {
-				left = fmt.Sprintf("/ %s", q)
+				left = searchBarLeft(q, false)
 			}
 		}
-		// The full shortcut list now lives in the `?` overlay (see renderHelp);
-		// the bar shows only the compact hint so it stays uncluttered.
-		hints = helpHint
 	}
 
 	left = leftStyle.Render(left)

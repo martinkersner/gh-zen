@@ -80,6 +80,44 @@ func TestStatusBarDetailMode(t *testing.T) {
 	}
 }
 
+// While searching in the detail view the bar shows the slash-prefixed query
+// exactly like the list filter — no "Issue · search: …" / "Pull Request · …"
+// formatting — and only the `? help` hint (no per-view shortcut list).
+func TestStatusBarDetailSearchParity(t *testing.T) {
+	m := newModel()
+	m.issueList.SetItems([]list.Item{item{number: 5, title: "x", body: "alpha beta", type_: "issue"}})
+	m.loading = false
+
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// Enter in-detail search and type a query.
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b', 'e'}})
+
+	mm := tm.(model)
+	if !mm.detailSearching {
+		t.Fatal("detail search did not start")
+	}
+	bar := mm.renderStatusBar()
+	if !strings.Contains(bar, "/ be") {
+		t.Errorf("detail search bar missing slash-prefixed query: %q", bar)
+	}
+	if strings.Contains(bar, "search:") {
+		t.Errorf("detail search bar should not show 'search:' prefix: %q", bar)
+	}
+	if strings.Contains(bar, "Issue") {
+		t.Errorf("detail search bar should not show item kind while searching: %q", bar)
+	}
+	// Hints must match the list: only the compact `? help`, no shortcut list.
+	if !strings.Contains(bar, "? help") {
+		t.Errorf("detail search bar missing help hint: %q", bar)
+	}
+	if strings.Contains(bar, "cancel") || strings.Contains(bar, "match") {
+		t.Errorf("detail search bar should not enumerate search shortcuts: %q", bar)
+	}
+}
+
 // On a narrow terminal the bar must stay a single row (no wrap) so it doesn't
 // overflow the one reserved status-bar line.
 func TestStatusBarFitsNarrowWidth(t *testing.T) {

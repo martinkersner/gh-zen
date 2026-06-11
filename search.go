@@ -4,6 +4,23 @@ import (
 	"strings"
 )
 
+// searchBarLeft renders the slash-prefixed search/filter query shown on the
+// left of the status bar. It is the single source of truth for that display,
+// shared by the list filter and the in-detail search so the two never diverge.
+//
+// While typing (typing=true) the bare slash is shown even for an empty query,
+// so the bar is the live, editable input; the caller decides whether to render
+// it at all for a non-typing (applied) state.
+func searchBarLeft(query string, typing bool) string {
+	if query == "" {
+		if typing {
+			return "/"
+		}
+		return ""
+	}
+	return "/ " + query
+}
+
 // searchMatch locates one occurrence of the in-detail search query inside the
 // rendered (word-wrapped) detail body. line is the 0-based index into the
 // wrapped lines; startCol/length are rune offsets into that line, so the render

@@ -173,8 +173,9 @@ func TestE2EFilter(t *testing.T) {
 	quit(t, tm)
 }
 
-// In an open detail view, '/' enters in-detail search; typing a query that
-// occurs in the body surfaces the live match count in the status bar.
+// In an open detail view, '/' enters in-detail search; typing a query surfaces
+// the live, slash-prefixed query in the status bar — identical to the list
+// filter (see searchBarLeft), with no per-view "search:" formatting.
 func TestE2EDetailSearch(t *testing.T) {
 	tm := newSeededModel(t)
 	waitForList(t, tm)
@@ -186,9 +187,8 @@ func TestE2EDetailSearch(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	tm.Type("needle")
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		// status bar shows "search: needle (1/1)" for the single match.
-		return bytes.Contains(b, []byte("search: needle")) &&
-			bytes.Contains(b, []byte("(1/1)"))
+		// status bar shows "/ needle", matching the list filter display.
+		return bytes.Contains(b, []byte("/ needle"))
 	}, teatest.WithDuration(e2eWaitTimeout))
 	quit(t, tm)
 }

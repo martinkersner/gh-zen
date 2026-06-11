@@ -5,6 +5,26 @@ import (
 	"testing"
 )
 
+// searchBarLeft is the single source of truth for the slash-prefixed query the
+// status bar shows for both the list filter and the in-detail search.
+func TestSearchBarLeft(t *testing.T) {
+	tests := []struct {
+		query  string
+		typing bool
+		want   string
+	}{
+		{"", true, "/"},          // live, editable input: bare slash
+		{"", false, ""},          // applied with no query: nothing
+		{"beta", true, "/ beta"}, // typing a query
+		{"beta", false, "/ beta"},
+	}
+	for _, tt := range tests {
+		if got := searchBarLeft(tt.query, tt.typing); got != tt.want {
+			t.Errorf("searchBarLeft(%q, %v) = %q, want %q", tt.query, tt.typing, got, tt.want)
+		}
+	}
+}
+
 func TestFindMatches(t *testing.T) {
 	tests := []struct {
 		name  string
