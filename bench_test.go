@@ -112,8 +112,20 @@ func BenchmarkViewDetail(b *testing.B) {
 // stubFetchBench swaps the network-backed fetch cmds for hermetic ones for the
 // duration of the benchmark, restoring them on cleanup. Mirrors stubFetch (the
 // *testing.T helper) so teatest benchmarks never touch the network.
+//
+// It is idempotent within a single benchmark: newSeededProgram calls it once per
+// iteration (so a new teatest bench can't forget to stub), but only the first
+// call swaps the globals and registers the restore. This both captures the true
+// originals (not an already-stubbed value) and registers exactly one cleanup,
+// regardless of b.N. The guard resets on cleanup so the next benchmark re-stubs.
+var benchFetchStubbed bool
+
 func stubFetchBench(b *testing.B) {
 	b.Helper()
+	if benchFetchStubbed {
+		return
+	}
+	benchFetchStubbed = true
 	origFetch := fetchIssuesAndPRs
 	origDiff := ghDiff
 	fetchIssuesAndPRs = func() tea.Cmd {
@@ -123,6 +135,7 @@ func stubFetchBench(b *testing.B) {
 	b.Cleanup(func() {
 		fetchIssuesAndPRs = origFetch
 		ghDiff = origDiff
+		benchFetchStubbed = false
 	})
 }
 
@@ -163,9 +176,11 @@ func quitBench(b *testing.B, tm *teatest.TestModel) {
 // consuming reader, so across iterations a "back to <screen>" wait could race a
 // skipped/diffed frame and either pass on stale bytes or hang. Per-iteration
 // programs keep each measurement self-contained and the needle waits unambiguous,
-// matching the one-shot pattern proven in e2e_test.go. The teardown is measured
-// too, but it is the same fixed CtrlC + shutdown each iteration, so it adds a
-// constant offset rather than noise that would mask a regression.
+// matching the one-shot pattern proven in e2e_test.go. Per-iteration setup
+// (program start + initial list render) and teardown are excluded from the timer
+// via StopTimer/StartTimer, so the reported time covers only the transition
+// keystrokes and their render waits, not the bootstrap (BenchmarkLaunch already
+// covers launch cost separately).
 
 // BenchmarkLaunch measures cold launch to first render: start the program and
 // wait for the seeded list to render, then tear it down. Each iteration is a
@@ -189,13 +204,19 @@ func BenchmarkLaunch(b *testing.B) {
 func BenchmarkTransitionListDetail(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		b.StopTimer()
 		tm := newSeededProgram(b)
 		waitForBench(b, tm, "first issue alpha")
+		b.StartTimer()
+
 		tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 		waitForBench(b, tm, "#11 first issue alpha")
 		tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
 		waitForBench(b, tm, "second issue beta")
+
+		b.StopTimer()
 		quitBench(b, tm)
+		b.StartTimer()
 	}
 }
 
@@ -204,13 +225,21 @@ func BenchmarkTransitionListDetail(b *testing.B) {
 func BenchmarkTransitionHelpOverlay(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		b.StopTimer()
 		tm := newSeededProgram(b)
 		waitForBench(b, tm, "first issue alpha")
+		b.StartTimer()
+
 		tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
 		waitForBench(b, tm, "Keyboard shortcuts")
 		tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
+		// The overlay text contains no "first issue alpha", so its reappearance
+		// unambiguously marks the return to the list (vs. the drained open frame).
 		waitForBench(b, tm, "first issue alpha")
+
+		b.StopTimer()
 		quitBench(b, tm)
+		b.StartTimer()
 	}
 }
 
@@ -221,13 +250,19 @@ func BenchmarkTransitionHelpOverlay(b *testing.B) {
 func BenchmarkTransitionFilter(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		b.StopTimer()
 		tm := newSeededProgram(b)
 		waitForBench(b, tm, "first issue alpha")
+		b.StartTimer()
+
 		tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 		tm.Type("beta")
 		waitForBench(b, tm, "second issue beta")
 		tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
 		waitForBench(b, tm, "first issue alpha")
+
+		b.StopTimer()
 		quitBench(b, tm)
+		b.StartTimer()
 	}
 }
