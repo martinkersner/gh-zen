@@ -62,8 +62,7 @@ func BenchmarkUpdateKeyBatch(b *testing.B) {
 	esc := tea.KeyMsg{Type: tea.KeyEsc}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var tm tea.Model = base
 		tm, _ = tm.Update(enter)
 		tm, _ = tm.Update(esc)
@@ -78,8 +77,7 @@ func BenchmarkUpdateNavigate(b *testing.B) {
 	up := tea.KeyMsg{Type: tea.KeyCtrlP}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var tm tea.Model = base
 		tm, _ = tm.Update(down)
 		tm, _ = tm.Update(up)
@@ -92,8 +90,7 @@ func BenchmarkViewList(b *testing.B) {
 	m := seededModel(b, e2eTermWidth, e2eTermHeight)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = m.View()
 	}
 }
@@ -103,8 +100,7 @@ func BenchmarkViewDetail(b *testing.B) {
 	m := openedDetailModel(b, e2eTermWidth, e2eTermHeight)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = m.View()
 	}
 }
@@ -187,8 +183,7 @@ func quitBench(b *testing.B, tm *teatest.TestModel) {
 // full bootstrap (Init load + first frames) through the in-memory terminal.
 // Teardown is excluded from the timer so only launch-to-first-render is measured.
 func BenchmarkLaunch(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		tm := newSeededProgram(b)
 		waitForBench(b, tm, "first issue alpha")
 		b.StopTimer()
@@ -202,8 +197,7 @@ func BenchmarkLaunch(b *testing.B) {
 // "second issue beta" (a different item) as the sentinel: it never appears in
 // the single-item detail view, so seeing it proves the list re-rendered.
 func BenchmarkTransitionListDetail(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		b.StopTimer()
 		tm := newSeededProgram(b)
 		waitForBench(b, tm, "first issue alpha")
@@ -223,8 +217,7 @@ func BenchmarkTransitionListDetail(b *testing.B) {
 // BenchmarkTransitionHelpOverlay measures opening and closing the shortcuts
 // overlay end-to-end.
 func BenchmarkTransitionHelpOverlay(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		b.StopTimer()
 		tm := newSeededProgram(b)
 		waitForBench(b, tm, "first issue alpha")
@@ -248,8 +241,7 @@ func BenchmarkTransitionHelpOverlay(b *testing.B) {
 // uses "first issue alpha" — the row filtered out by "beta" — so its reappearance
 // proves the filter was cleared and the full list re-rendered.
 func BenchmarkTransitionFilter(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		b.StopTimer()
 		tm := newSeededProgram(b)
 		waitForBench(b, tm, "first issue alpha")
