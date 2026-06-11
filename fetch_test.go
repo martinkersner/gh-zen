@@ -13,15 +13,13 @@ import (
 // fetch layer's private response types), and can return a configured error to
 // drive the error branches.
 type fakeGraphQLClient struct {
-	err       error
-	respJSON  string
-	gotQuery  string
-	gotVars   map[string]interface{}
-	callCount int
+	err      error
+	respJSON string
+	gotQuery string
+	gotVars  map[string]interface{}
 }
 
 func (f *fakeGraphQLClient) Do(query string, variables map[string]interface{}, response interface{}) error {
-	f.callCount++
 	f.gotQuery = query
 	f.gotVars = variables
 	if f.err != nil {
