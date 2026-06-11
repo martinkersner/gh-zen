@@ -22,8 +22,8 @@ const (
 )
 
 // detailHeaderHeight is the number of lines the detail view reserves above the
-// scrollable body: the title line, the meta line, and the meta's bottom margin.
-const detailHeaderHeight = 3
+// scrollable body: the title line.
+const detailHeaderHeight = 1
 
 type item struct {
 	number int
@@ -385,8 +385,8 @@ func (m *model) updateListSize() {
 }
 
 // detailViewportSize computes the width/height for the detail body viewport
-// from the terminal size, reserving detailHeaderHeight lines for the title and
-// meta plus statusBarHeight for the bottom status bar. Heights/widths are
+// from the terminal size, reserving detailHeaderHeight lines for the title
+// plus statusBarHeight for the bottom status bar. Heights/widths are
 // clamped to a minimum of 1 so tiny terminals don't produce negative dimensions.
 func detailViewportSize(width, height int) (int, int) {
 	w := width - 2
@@ -569,12 +569,10 @@ func (m model) renderDetail() string {
 	}
 
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7aa2f7"))
-	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89")).MarginBottom(1)
 
 	title := titleStyle.Render(fmt.Sprintf("#%d %s", m.detailItem.number, m.detailItem.title))
-	meta := metaStyle.Render(fmt.Sprintf("[%s]", m.detailItem.type_))
 
-	return lipgloss.JoinVertical(lipgloss.Left, title, meta, m.detailViewport.View(), m.renderStatusBar())
+	return lipgloss.JoinVertical(lipgloss.Left, title, m.detailViewport.View(), m.renderStatusBar())
 }
 
 func cacheKey(it *item) string {
