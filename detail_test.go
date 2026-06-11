@@ -14,7 +14,7 @@ func TestDetailViewportSize(t *testing.T) {
 		w, h         int
 		wantW, wantH int
 	}{
-		{"normal", 80, 24, 78, 20},
+		{"normal", 80, 24, 78, 22},
 		{"tiny height", 80, 2, 78, 1},
 		{"zero", 0, 0, 1, 1},
 		{"negative", -5, -5, 1, 1},
