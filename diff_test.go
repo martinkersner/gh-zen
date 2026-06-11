@@ -221,6 +221,39 @@ func TestStatusBarIssueNoDiffHint(t *testing.T) {
 	}
 }
 
+// Pressing r while the diff sub-view is open re-fetches the diff (not the body),
+// and an updated diff replaces the cached one while preserving scroll position.
+func TestDiffRefreshRefetchesDiff(t *testing.T) {
+	version := "v1\n"
+	withStubDiff(t, func(number int) (string, error) { return version, nil })
+
+	tm := openPRDetail(t)
+	tm, cmd := tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	tm, _ = tm.Update(cmd())
+	if !strings.Contains(tm.(model).detailDiff, "v1") {
+		t.Fatalf("setup: expected v1 diff, got %q", tm.(model).detailDiff)
+	}
+
+	// r in the diff view must dispatch a diff fetch (not a body fetch).
+	version = "v2\n"
+	tm, cmd = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	if cmd == nil {
+		t.Fatal("r in diff view returned nil cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(diffMsg); !ok {
+		t.Fatalf("r in diff view dispatched %T, want diffMsg", msg)
+	}
+	tm, _ = tm.Update(msg)
+	mm := tm.(model)
+	if !strings.Contains(mm.detailDiff, "v2") {
+		t.Errorf("diff not refreshed: %q", mm.detailDiff)
+	}
+	if mm.diffCache[cacheKey(mm.detailItem)] != "v2\n" {
+		t.Errorf("diff cache not updated on refresh: %q", mm.diffCache[cacheKey(mm.detailItem)])
+	}
+}
+
 // colorizeDiff wraps +/- lines in color escapes and leaves the underlying text
 // intact; empty input yields empty output.
 func TestColorizeDiff(t *testing.T) {

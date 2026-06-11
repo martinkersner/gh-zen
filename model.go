@@ -172,6 +172,11 @@ func (m *model) currentList() *list.Model {
 // on a same-item refresh).
 func (m model) refreshCurrentView() tea.Cmd {
 	if m.detailOpen && m.detailItem != nil {
+		// In the PR diff sub-view, refresh the diff rather than the body so the
+		// visible content is what actually gets updated.
+		if m.detailShowDiff {
+			return m.cmdFetchDiff(m.detailItem)
+		}
 		return m.cmdFetchBody(m.detailItem)
 	}
 	return fetchIssuesAndPRs()
@@ -387,8 +392,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailDiff = msg.diff
 			m.detailDiffLoading = false
 			if m.detailShowDiff {
+				// Preserve scroll position so an auto/manual refresh of an already
+				// open diff doesn't yank the viewport back to the top. On the first
+				// toggle the offset is already 0, so this still opens at the top.
+				offset := m.detailViewport.YOffset
 				m.detailViewport.SetContent(m.detailContent())
-				m.detailViewport.GotoTop()
+				m.detailViewport.SetYOffset(offset)
 			}
 		}
 
