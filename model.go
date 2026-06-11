@@ -175,9 +175,11 @@ func (m *model) setListItems(tabIdx tab, items []list.Item) {
 
 // restoreIndex re-selects idx on l, clamped to the current item count, so a
 // refresh that replaced the items keeps the cursor where it was (or on the last
-// item if the list shrank). A negative/empty result is left at 0.
+// item if the list shrank). A negative/empty result is left at 0. The bound uses
+// the visible (filtered) item count, matching the index space Index()/Select()
+// operate in, so it stays correct when a filter is applied.
 func restoreIndex(l *list.Model, idx int) {
-	n := len(l.Items())
+	n := len(l.VisibleItems())
 	if n == 0 {
 		return
 	}
