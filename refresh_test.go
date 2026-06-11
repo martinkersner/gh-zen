@@ -154,6 +154,75 @@ func TestBodyRefreshErrorKeepsCachedBody(t *testing.T) {
 	}
 }
 
+// A refresh (dataMsg) delivered while a filter is applied must recompute the
+// filtered/visible set so the visible list reflects the new items, and the
+// restored selection must land on the correct visible row. Regression for the
+// discarded SetItems cmd in setListItems (issue #18).
+func TestRefreshReFiltersWhileFilterApplied(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Seed: two "alpha" items and one "beta" item.
+	tm, _ = tm.Update(dataMsg{issues: []list.Item{
+		item{number: 1, title: "alpha", type_: "issue"},
+		item{number: 2, title: "alpha", type_: "issue"},
+		item{number: 3, title: "beta", type_: "issue"},
+	}})
+
+	// Put the list into the FilterApplied state (browsing filtered results, not
+	// mid-typing). SetFilterText computes the filtered set synchronously and
+	// leaves filterState == FilterApplied, mirroring what the user sees after
+	// typing a query and pressing enter.
+	mm := tm.(model)
+	mm.issueList.SetFilterText("alpha")
+	if mm.issueList.FilterState() != list.FilterApplied {
+		t.Fatalf("setup: expected FilterApplied, got %v", mm.issueList.FilterState())
+	}
+	if got := len(mm.issueList.VisibleItems()); got != 2 {
+		t.Fatalf("setup: expected 2 visible alpha items, got %d", got)
+	}
+	// Select the second visible (filtered) item.
+	mm.issueList.Select(1)
+	tm = mm
+
+	// Refresh: new data has three "alpha" items (and a beta). With the bug,
+	// setListItems discards the SetItems cmd, so filteredItems is nil'd and not
+	// recomputed: VisibleItems() goes empty and the selection restore clamps
+	// against a stale count.
+	tm, _ = tm.Update(dataMsg{issues: []list.Item{
+		item{number: 4, title: "alpha", type_: "issue"},
+		item{number: 5, title: "alpha", type_: "issue"},
+		item{number: 6, title: "alpha", type_: "issue"},
+		item{number: 7, title: "beta", type_: "issue"},
+	}})
+	mm = tm.(model)
+
+	// Filter must still be applied and recomputed against the new items.
+	if mm.issueList.FilterState() != list.FilterApplied {
+		t.Fatalf("after refresh: filter state = %v, want FilterApplied", mm.issueList.FilterState())
+	}
+	visible := mm.issueList.VisibleItems()
+	if len(visible) != 3 {
+		t.Fatalf("after refresh: visible count = %d, want 3 (stale filtered set)", len(visible))
+	}
+	// All visible items must be the new "alpha" items (#4,#5,#6), none stale.
+	wantNums := map[int]bool{4: true, 5: true, 6: true}
+	for _, it := range visible {
+		n := it.(item).number
+		if !wantNums[n] {
+			t.Errorf("after refresh: unexpected visible item #%d", n)
+		}
+	}
+	// Selection preserved at index 1, now pointing at a valid (new) visible row.
+	if got := mm.issueList.Index(); got != 1 {
+		t.Errorf("after refresh: index = %d, want 1 (selection not preserved)", got)
+	}
+	if sel, ok := mm.issueList.SelectedItem().(item); !ok || !wantNums[sel.number] {
+		t.Errorf("after refresh: selected item = %+v, want one of #4/#5/#6", mm.issueList.SelectedItem())
+	}
+}
+
 type errFake struct{}
 
 func (errFake) Error() string { return "fake fetch error" }
