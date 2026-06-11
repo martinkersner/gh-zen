@@ -847,10 +847,14 @@ func (m model) renderStatusBar() string {
 		cur := m.currentList()
 		switch cur.FilterState() {
 		case list.Filtering:
-			left = fmt.Sprintf("%s · filter: %s", mode, cur.FilterValue())
+			if q := cur.FilterValue(); q != "" {
+				left = fmt.Sprintf("/ %s", q)
+			} else {
+				left = "/"
+			}
 		case list.FilterApplied:
 			if q := cur.FilterValue(); q != "" {
-				left = fmt.Sprintf("%s · filter: %s", mode, q)
+				left = fmt.Sprintf("/ %s", q)
 			}
 		}
 		// The full shortcut list now lives in the `?` overlay (see renderHelp);

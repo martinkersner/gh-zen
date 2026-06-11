@@ -111,8 +111,14 @@ func TestStatusBarShowsFilterQuery(t *testing.T) {
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a', 'l'}})
 
 	bar := tm.(model).renderStatusBar()
-	if !strings.Contains(bar, "filter: al") {
+	if !strings.Contains(bar, "/ al") {
 		t.Errorf("status bar missing active filter query: %q", bar)
+	}
+	if strings.Contains(bar, "filter:") {
+		t.Errorf("status bar should not show 'filter:' prefix: %q", bar)
+	}
+	if strings.Contains(bar, "Issues") {
+		t.Errorf("status bar should not show mode label in filter display: %q", bar)
 	}
 }
 
@@ -142,14 +148,15 @@ func TestStatusBarShowsLiveFilterWhileTyping(t *testing.T) {
 		t.Fatal("list not in SettingFilter state after pressing /")
 	}
 	bar := tm.(model).renderStatusBar()
-	if !strings.Contains(bar, "filter:") {
-		t.Errorf("status bar missing live filter input while typing: %q", bar)
+	// Empty query while typing shows just the slash in the bottom-left.
+	if !strings.Contains(bar, "/") {
+		t.Errorf("status bar missing slash for live filter input while typing: %q", bar)
 	}
 
-	// As runes are typed the live value updates in the bar.
+	// As runes are typed the live value renders one space after the slash.
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b', 'e'}})
 	bar = tm.(model).renderStatusBar()
-	if !strings.Contains(bar, "filter: be") {
+	if !strings.Contains(bar, "/ be") {
 		t.Errorf("status bar missing live typed filter value: %q", bar)
 	}
 }
