@@ -24,11 +24,13 @@ func TestStatusBarListMode(t *testing.T) {
 	if !strings.Contains(bar, "Issues") {
 		t.Errorf("status bar missing mode %q: %q", "Issues", bar)
 	}
-	if !strings.Contains(bar, "q/esc quit") {
-		t.Errorf("status bar missing quit hint: %q", bar)
+	// The inline shortcut list is collapsed into a single `? help` hint; the
+	// full list lives in the overlay (see TestHelpOverlay*).
+	if !strings.Contains(bar, "? help") {
+		t.Errorf("status bar missing help hint: %q", bar)
 	}
-	if !strings.Contains(bar, "filter") {
-		t.Errorf("status bar missing filter hint: %q", bar)
+	if strings.Contains(bar, "q/esc quit") {
+		t.Errorf("status bar should no longer enumerate shortcuts: %q", bar)
 	}
 }
 
@@ -65,14 +67,15 @@ func TestStatusBarDetailMode(t *testing.T) {
 		t.Fatal("detail did not open")
 	}
 	bar := mm.renderStatusBar()
-	if !strings.Contains(bar, "back") {
-		t.Errorf("detail status bar missing back hint: %q", bar)
+	// The detail bar also collapses its shortcut list into `? help`.
+	if !strings.Contains(bar, "? help") {
+		t.Errorf("detail status bar missing help hint: %q", bar)
 	}
-	if !strings.Contains(bar, "scroll") {
-		t.Errorf("detail status bar missing scroll hint: %q", bar)
+	if strings.Contains(bar, "ctrl+n/ctrl+p scroll") {
+		t.Errorf("detail status bar should no longer enumerate shortcuts: %q", bar)
 	}
 	// The view itself must include the bar.
-	if !strings.Contains(mm.View(), "back") {
+	if !strings.Contains(mm.View(), "? help") {
 		t.Errorf("detail view missing status bar")
 	}
 }

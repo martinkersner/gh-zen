@@ -188,26 +188,26 @@ func TestDiffFetchErrorShown(t *testing.T) {
 	}
 }
 
-// The PR detail status bar advertises the d key, and the verb flips with state.
-func TestStatusBarPRDiffHint(t *testing.T) {
+// The PR help overlay advertises the d key, and the verb flips with state.
+func TestHelpOverlayPRDiffHint(t *testing.T) {
 	withStubDiff(t, func(number int) (string, error) { return "x\n", nil })
 
 	tm := openPRDetail(t)
-	bar := tm.(model).renderStatusBar()
-	if !strings.Contains(bar, "d diff") {
-		t.Errorf("PR detail status bar missing diff hint: %q", bar)
+	help := tm.(model).renderHelp()
+	if !strings.Contains(help, "show diff") {
+		t.Errorf("PR help overlay missing diff hint: %q", help)
 	}
 
 	tm, cmd := tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
 	tm, _ = tm.Update(cmd())
-	bar = tm.(model).renderStatusBar()
-	if !strings.Contains(bar, "d body") {
-		t.Errorf("diff-view status bar should offer 'd body': %q", bar)
+	help = tm.(model).renderHelp()
+	if !strings.Contains(help, "show body") {
+		t.Errorf("diff-view help overlay should offer 'show body': %q", help)
 	}
 }
 
-// An issue detail status bar must not advertise the diff key.
-func TestStatusBarIssueNoDiffHint(t *testing.T) {
+// An issue help overlay must not advertise the diff key.
+func TestHelpOverlayIssueNoDiffHint(t *testing.T) {
 	m := newModel()
 	m.issueList.SetItems([]list.Item{item{number: 1, title: "iss", body: "b", type_: "issue"}})
 	m.loading = false
@@ -215,9 +215,9 @@ func TestStatusBarIssueNoDiffHint(t *testing.T) {
 	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
-	bar := tm.(model).renderStatusBar()
-	if strings.Contains(bar, "diff") {
-		t.Errorf("issue detail status bar should not mention diff: %q", bar)
+	help := tm.(model).renderHelp()
+	if strings.Contains(help, "diff") {
+		t.Errorf("issue help overlay should not mention diff: %q", help)
 	}
 }
 
