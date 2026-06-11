@@ -148,9 +148,13 @@ func TestStatusBarShowsLiveFilterWhileTyping(t *testing.T) {
 		t.Fatal("list not in SettingFilter state after pressing /")
 	}
 	bar := tm.(model).renderStatusBar()
-	// Empty query while typing shows just the slash in the bottom-left.
+	// Empty query while typing shows just the slash in the bottom-left — no
+	// 'filter:' prefix and no mode label.
 	if !strings.Contains(bar, "/") {
 		t.Errorf("status bar missing slash for live filter input while typing: %q", bar)
+	}
+	if strings.Contains(bar, "filter:") {
+		t.Errorf("status bar should not show 'filter:' prefix: %q", bar)
 	}
 
 	// As runes are typed the live value renders one space after the slash.
