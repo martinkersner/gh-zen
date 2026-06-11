@@ -135,6 +135,11 @@ type model struct {
 	// Cache: "pr_7" -> diff text (PRs only)
 	diffCache map[string]string
 
+	// showHelp toggles the keyboard-shortcuts overlay. When set, View renders
+	// the help overlay (see renderHelp) over the current view; `?` or esc closes
+	// it. It reflects the shortcuts of whichever view (list/detail) is active.
+	showHelp bool
+
 	// Async state
 	loading bool
 	err     error
@@ -266,6 +271,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		// The help overlay captures keys while open: `?` or esc closes it,
+		// ctrl+c still quits, and every other key is swallowed so it can't
+		// act on the obscured view underneath.
+		if m.showHelp {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "?", "esc":
+				m.showHelp = false
+			}
+			return m, nil
+		}
+
 		if m.detailOpen {
 			// ctrl+c always quits, even mid-search.
 			if msg.String() == "ctrl+c" {
@@ -305,6 +323,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			switch msg.String() {
+			case "?":
+				m.showHelp = true
+				return m, nil
 			case "esc", "q":
 				m.detailOpen = false
 				m.detailItem = nil
@@ -355,6 +376,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
+		case "?":
+			m.showHelp = true
+			return m, nil
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "r":
@@ -746,6 +770,12 @@ func (m model) View() string {
 		return ""
 	}
 
+	// The shortcuts overlay replaces the underlying view while open so it reads
+	// as a focused, centered menu rather than text bleeding through.
+	if m.showHelp {
+		return m.renderHelp()
+	}
+
 	if m.detailOpen {
 		return m.renderDetail()
 	}
@@ -789,15 +819,9 @@ func (m model) renderStatusBar() string {
 			kind = "Pull Request"
 		}
 		left = kind
-		hints = "q/esc back · ctrl+n/ctrl+p scroll · / search · r refresh"
-		// PRs gain a key to toggle between the body and the diff view.
-		if isPR {
-			verb := "diff"
-			if m.detailShowDiff {
-				verb = "body"
-			}
-			hints = fmt.Sprintf("q/esc back · ctrl+n/ctrl+p scroll · d %s · / search · r refresh", verb)
-		}
+		// The full shortcut list now lives in the `?` overlay (see renderHelp);
+		// the bar shows only the compact hint so it stays uncluttered.
+		hints = helpHint
 		// In search mode, surface the live query and match position, and switch
 		// the hints to reflect that ctrl+n/ctrl+p now jump between matches.
 		if m.detailSearching {
@@ -829,7 +853,9 @@ func (m model) renderStatusBar() string {
 				left = fmt.Sprintf("%s · filter: %s", mode, q)
 			}
 		}
-		hints = "q/esc quit · tab switch · / filter · enter open"
+		// The full shortcut list now lives in the `?` overlay (see renderHelp);
+		// the bar shows only the compact hint so it stays uncluttered.
+		hints = helpHint
 	}
 
 	left = leftStyle.Render(left)
