@@ -134,6 +134,11 @@ func newModel() model {
 	m.prList.SetShowTitle(false)
 	m.issueList.SetShowStatusBar(false)
 	m.prList.SetShowStatusBar(false)
+	// Filtering stays enabled (so `/` works and items filter), but the list's
+	// built-in filter input/prompt line above the list is hidden; the live
+	// filter is rendered in the bottom status bar instead (see renderStatusBar).
+	m.issueList.SetShowFilter(false)
+	m.prList.SetShowFilter(false)
 
 	// Move with ctrl+n / ctrl+p (and arrows); drop j/k.
 	up := key.NewBinding(key.WithKeys("up", "ctrl+p"), key.WithHelp("ctrl+p", "up"))
@@ -502,10 +507,15 @@ func (m model) renderStatusBar() string {
 			mode = "Pull Requests"
 		}
 		left = mode
-		// Surface the active filter query so the user can see what they typed.
+		// Surface the filter query so the user can see what they typed. While
+		// typing (Filtering) the list's built-in input is hidden, so render the
+		// live, editable value here even when empty — that makes the bar the one
+		// place the filter lives, both during typing and once applied.
 		cur := m.currentList()
 		switch cur.FilterState() {
-		case list.Filtering, list.FilterApplied:
+		case list.Filtering:
+			left = fmt.Sprintf("%s · filter: %s", mode, cur.FilterValue())
+		case list.FilterApplied:
 			if q := cur.FilterValue(); q != "" {
 				left = fmt.Sprintf("%s · filter: %s", mode, q)
 			}
