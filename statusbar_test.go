@@ -112,3 +112,41 @@ func TestStatusBarShowsFilterQuery(t *testing.T) {
 		t.Errorf("status bar missing active filter query: %q", bar)
 	}
 }
+
+// While typing a filter (the list is in the SettingFilter state) the live,
+// editable query is shown in the status bar — not above the list. The built-in
+// filter prompt line is suppressed (SetShowFilter(false)), so the bar is the
+// only place the in-progress filter appears.
+func TestStatusBarShowsLiveFilterWhileTyping(t *testing.T) {
+	m := newModel()
+	if m.issueList.ShowFilter() {
+		t.Fatal("list built-in filter bar should be hidden; SetShowFilter(false) expected")
+	}
+
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{
+		issues: []list.Item{
+			item{number: 1, title: "alpha", type_: "issue"},
+			item{number: 2, title: "beta", type_: "issue"},
+		},
+	})
+
+	// Enter filter mode (typing) without yet typing any runes.
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	mm := tm.(model)
+	if !mm.currentList().SettingFilter() {
+		t.Fatal("list not in SettingFilter state after pressing /")
+	}
+	bar := tm.(model).renderStatusBar()
+	if !strings.Contains(bar, "filter:") {
+		t.Errorf("status bar missing live filter input while typing: %q", bar)
+	}
+
+	// As runes are typed the live value updates in the bar.
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b', 'e'}})
+	bar = tm.(model).renderStatusBar()
+	if !strings.Contains(bar, "filter: be") {
+		t.Errorf("status bar missing live typed filter value: %q", bar)
+	}
+}
