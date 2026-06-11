@@ -14,13 +14,12 @@ import (
 // (teatest), exercising the bootstrap + full render loop (Init/Update/View)
 // that unit tests bypass by calling Update directly.
 //
-// These flows are fully offline: the data-fetch cmd (fetchIssuesAndPRs, a
-// package var) is swapped for a hermetic source that returns seeded items, so
-// Init's initial load and the 5s tick refresh both produce the same fixed list
-// without touching the network. Network-backed body/diff *fetches* still can't
-// run hermetically here — that depends on the fake client from #43 — so the
-// diff flow asserts only on the synchronous "Loading diff..." frame the toggle
-// renders before the (stubbed) fetch resolves.
+// These flows are fully offline: the fetch cmds (fetchIssuesAndPRs and ghDiff,
+// both package vars) are swapped for hermetic sources, so Init's initial load,
+// the 5s tick refresh, and the PR diff toggle all produce fixed data without
+// touching the network. The *real* network-backed fetch paths still can't be
+// exercised hermetically here — that depends on the fake GraphQL client from
+// #43; this file stubs them rather than testing them.
 
 const (
 	e2eTermWidth  = 80
