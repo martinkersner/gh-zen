@@ -134,6 +134,28 @@ func TestDetailSearchEscClears(t *testing.T) {
 	}
 }
 
+// ctrl+g exits search mode and clears the query/matches, mirroring esc; the
+// detail view stays open.
+func TestDetailSearchCtrlGClears(t *testing.T) {
+	m := openDetailWithBody(t, "alpha beta gamma", 80, 24)
+
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	tm = typeRunes(tm, "beta")
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+
+	mm := tm.(model)
+	if mm.detailSearching {
+		t.Error("ctrl+g did not exit search mode")
+	}
+	if mm.detailQuery != "" || len(mm.detailMatches) != 0 {
+		t.Errorf("ctrl+g did not clear query/matches: q=%q matches=%d", mm.detailQuery, len(mm.detailMatches))
+	}
+	if !mm.detailOpen {
+		t.Error("ctrl+g in search mode closed the detail view; should only exit search")
+	}
+}
+
 // Backspace shrinks the query and re-finds matches.
 func TestDetailSearchBackspace(t *testing.T) {
 	m := openDetailWithBody(t, "beta betax", 80, 24)

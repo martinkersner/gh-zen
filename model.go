@@ -278,7 +278,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "ctrl+c":
 				return m, tea.Quit
-			case "?", "esc":
+			case "?", "esc", "ctrl+g":
 				m.showHelp = false
 			}
 			return m, nil
@@ -295,7 +295,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// instead of scrolling one line.
 			if m.detailSearching {
 				switch msg.Type {
-				case tea.KeyEsc:
+				case tea.KeyEsc, tea.KeyCtrlG:
 					m.exitDetailSearch()
 					return m, nil
 				case tea.KeyCtrlN:
@@ -326,7 +326,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "?":
 				m.showHelp = true
 				return m, nil
-			case "esc", "q":
+			case "esc", "q", "ctrl+g":
 				m.detailOpen = false
 				m.detailItem = nil
 				m.detailShowDiff = false
@@ -371,6 +371,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+p":
 				m.currentList().CursorUp()
 				return m, nil
+			case "ctrl+g":
+				// Cancel the filter, mirroring esc. The list cancels on esc, so
+				// forward a synthetic esc rather than typing a literal ctrl+g.
+				cur := m.currentList()
+				updated, cmd := cur.Update(tea.KeyMsg{Type: tea.KeyEsc})
+				*cur = updated
+				return m, cmd
 			}
 			break
 		}
@@ -379,7 +386,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "?":
 			m.showHelp = true
 			return m, nil
-		case "q", "ctrl+c":
+		case "q", "ctrl+c", "ctrl+g":
 			return m, tea.Quit
 		case "r":
 			return m, m.refreshCurrentView()

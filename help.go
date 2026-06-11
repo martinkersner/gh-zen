@@ -29,7 +29,7 @@ const helpHint = "? help"
 func (m model) currentShortcuts() []shortcut {
 	if m.detailOpen {
 		s := []shortcut{
-			{"q/esc", "back"},
+			{"q/esc/ctrl+g", "back"},
 			{"ctrl+n/ctrl+p", "scroll"},
 		}
 		// PRs gain a key to toggle between the body and the diff view.
@@ -49,7 +49,7 @@ func (m model) currentShortcuts() []shortcut {
 	}
 
 	return []shortcut{
-		{"q/esc", "quit"},
+		{"q/esc/ctrl+g", "quit"},
 		{"tab", "switch tab"},
 		{"/", "filter"},
 		{"enter", "open"},
@@ -60,7 +60,7 @@ func (m model) currentShortcuts() []shortcut {
 
 // renderHelp renders the shortcuts overlay: a bordered box listing every
 // shortcut valid in the current view/mode with its description. It is shown
-// centered over the screen while m.showHelp is set; `?` or esc dismisses it.
+// centered over the screen while m.showHelp is set; `?`, esc, or ctrl+g dismisses it.
 func (m model) renderHelp() string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7aa2f7"))
 	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7aa2f7"))
@@ -82,7 +82,7 @@ func (m model) renderHelp() string {
 		key := keyStyle.Width(keyWidth).Render(s.keys)
 		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Left, key, "  ", descStyle.Render(s.desc)))
 	}
-	rows = append(rows, "", descStyle.Render("? or esc to close"))
+	rows = append(rows, "", descStyle.Render("? or esc/ctrl+g to close"))
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
