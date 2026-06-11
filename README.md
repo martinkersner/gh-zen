@@ -1,11 +1,11 @@
 # gh-zen
 
-A calm, minimal GitHub TUI in your terminal. A simpler alternative to `gh-dash`.
+A minimalistic TUI for the GitHub CLI.
 
 ## Install
 
 ```bash
-gh extension install kersner/gh-zen
+gh extension install martinkersner/gh-zen
 ```
 
 ## Usage
@@ -23,7 +23,3 @@ make build
 make install
 make run
 ```
-
-## License
-
-MIT
