@@ -152,6 +152,18 @@ func (m *model) currentList() *list.Model {
 	return &m.issueList
 }
 
+// refreshCurrentView re-fetches whatever the user is currently looking at: the
+// focused item's body when the detail view is open, otherwise the issues/PRs
+// lists. Selection and scroll position are preserved by the respective message
+// handlers (dataMsg restores the list index; bodyMsg keeps the viewport offset
+// on a same-item refresh).
+func (m model) refreshCurrentView() tea.Cmd {
+	if m.detailOpen && m.detailItem != nil {
+		return m.cmdFetchBody(m.detailItem)
+	}
+	return fetchIssuesAndPRs()
+}
+
 func (m *model) setListItems(tabIdx tab, items []list.Item) {
 	switch tabIdx {
 	case tabIssues:
@@ -161,8 +173,27 @@ func (m *model) setListItems(tabIdx tab, items []list.Item) {
 	}
 }
 
+// restoreIndex re-selects idx on l, clamped to the current item count, so a
+// refresh that replaced the items keeps the cursor where it was (or on the last
+// item if the list shrank). A negative/empty result is left at 0. The bound uses
+// the visible (filtered) item count, matching the index space Index()/Select()
+// operate in, so it stays correct when a filter is applied.
+func restoreIndex(l *list.Model, idx int) {
+	n := len(l.VisibleItems())
+	if n == 0 {
+		return
+	}
+	if idx >= n {
+		idx = n - 1
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	l.Select(idx)
+}
+
 func (m model) Init() tea.Cmd {
-	return fetchIssuesAndPRs()
+	return tea.Batch(fetchIssuesAndPRs(), tickCmd())
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -192,6 +223,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+p":
 				m.detailViewport.ScrollUp(1)
 				return m, nil
+			case "r":
+				return m, m.refreshCurrentView()
 			}
 			// Forward scroll keys (arrows, pgup/pgdn, j/k) to the viewport.
 			var cmd tea.Cmd
@@ -220,6 +253,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "r":
+			return m, m.refreshCurrentView()
 		case "tab", "l", "right":
 			m.activeTab = (m.activeTab + 1) % tab(len(m.tabs))
 			m.updateListSize()
@@ -243,8 +278,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dataMsg:
 		m.loading = false
 		m.err = nil
+		// Preserve the cursor position across refreshes: capture each list's
+		// index before repopulating, then restore it clamped to the new length
+		// so an auto/manual refresh doesn't jump the selection back to the top.
+		issueIdx := m.issueList.Index()
+		prIdx := m.prList.Index()
 		m.setListItems(tabIssues, msg.issues)
 		m.setListItems(tabPRs, msg.prs)
+		restoreIndex(&m.issueList, issueIdx)
+		restoreIndex(&m.prList, prIdx)
 		m.updateListSize()
 
 		// Prefetch first 5 bodies for the active tab
@@ -263,17 +305,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case bodyMsg:
+		if msg.err != nil {
+			// A failed body fetch (e.g. background refresh) keeps the cached
+			// content rather than blanking the view.
+			if m.detailOpen && m.detailItem != nil && cacheKey(m.detailItem) == msg.key {
+				m.detailLoading = false
+			}
+			break
+		}
 		m.bodyCache[msg.key] = msg.body
 		if m.detailOpen && m.detailItem != nil && cacheKey(m.detailItem) == msg.key {
+			// Preserve the current scroll position across a refresh so the user
+			// isn't yanked back to the top; SetYOffset clamps to the new content.
+			offset := m.detailViewport.YOffset
 			m.detailBody = m.cachedBody(m.detailItem)
 			m.detailLoading = false
 			m.detailViewport.SetContent(m.detailBodyContent())
-			m.detailViewport.GotoTop()
+			m.detailViewport.SetYOffset(offset)
 		}
 
 	case errMsg:
 		m.loading = false
 		m.err = msg.err
+
+	case tickMsg:
+		// Auto-refresh the current view, then re-arm the ticker. Skip the data
+		// fetch while the user is mid-filter so the list isn't reshuffled under
+		// them; the ticker still keeps running.
+		if m.detailOpen || !m.currentList().SettingFilter() {
+			cmds = append(cmds, m.refreshCurrentView())
+		}
+		cmds = append(cmds, tickCmd())
+		return m, tea.Batch(cmds...)
 	}
 
 	// Pass through to active list
@@ -448,9 +511,19 @@ func (m model) cmdPrefetchBody(it *item) tea.Cmd {
 	}
 }
 
+// cmdFetchBody re-fetches the focused item's content from GitHub. Today the
+// detail view shows only the body, so that's all we pull; once PR diffs land
+// (#15) the diff fetch can be slotted in here alongside the body fetch.
 func (m model) cmdFetchBody(it *item) tea.Cmd {
+	key := cacheKey(it)
+	number := it.number
+	isPR := it.type_ == "pr"
 	return func() tea.Msg {
-		return bodyMsg{key: cacheKey(it), body: it.body}
+		body, err := fetchBody(number, isPR)
+		if err != nil {
+			return bodyMsg{key: key, err: err}
+		}
+		return bodyMsg{key: key, body: body}
 	}
 }
 
@@ -464,10 +537,63 @@ type dataMsg struct {
 type bodyMsg struct {
 	key  string
 	body string
+	err  error
 }
 
 type errMsg struct {
 	err error
+}
+
+// fetchBody pulls the current body for a single issue or PR from GitHub. It is a
+// blocking call meant to run inside a tea.Cmd. Kept separate from the list fetch
+// so the detail refresh path can grow (e.g. PR diffs, #15) independently.
+func fetchBody(number int, isPR bool) (string, error) {
+	client, err := api.DefaultGraphQLClient()
+	if err != nil {
+		return "", err
+	}
+	repo, err := repository.Current()
+	if err != nil {
+		return "", err
+	}
+
+	field := "issue"
+	if isPR {
+		field = "pullRequest"
+	}
+	query := fmt.Sprintf(`
+		query($owner: String!, $repo: String!, $number: Int!) {
+			repository(owner: $owner, name: $repo) {
+				%s(number: $number) {
+					body
+				}
+			}
+		}
+	`, field)
+	variables := map[string]interface{}{
+		"owner":  repo.Owner,
+		"repo":   repo.Name,
+		"number": number,
+	}
+
+	type response struct {
+		Repository struct {
+			Issue struct {
+				Body string `json:"body"`
+			} `json:"issue"`
+			PullRequest struct {
+				Body string `json:"body"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	}
+	var resp response
+	if err := client.Do(query, variables, &resp); err != nil {
+		return "", err
+	}
+	if isPR {
+		return resp.Repository.PullRequest.Body, nil
+	}
+	return resp.Repository.Issue.Body, nil
 }
 
 func fetchIssuesAndPRs() tea.Cmd {
