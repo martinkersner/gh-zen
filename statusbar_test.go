@@ -77,6 +77,20 @@ func TestStatusBarDetailMode(t *testing.T) {
 	}
 }
 
+// On a narrow terminal the bar must stay a single row (no wrap) so it doesn't
+// overflow the one reserved status-bar line.
+func TestStatusBarFitsNarrowWidth(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 20, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: []list.Item{item{number: 1, title: "a", type_: "issue"}}})
+
+	bar := tm.(model).renderStatusBar()
+	if strings.Contains(bar, "\n") {
+		t.Errorf("status bar wrapped onto multiple rows: %q", bar)
+	}
+}
+
 // When a filter query is active, the bar surfaces the typed query.
 func TestStatusBarShowsFilterQuery(t *testing.T) {
 	m := newModel()

@@ -445,21 +445,14 @@ func (m model) renderList() string {
 	// Tabs
 	b += m.renderTabs() + "\n\n"
 
-	// Error
+	// Error / Loading still show the bar so quit help is always visible.
 	if m.err != nil {
 		b += fmt.Sprintf("Error: %v\n", m.err)
-		return b
-	}
-
-	// Loading
-	if m.loading {
+	} else if m.loading {
 		b += "Loading..."
-		return b
+	} else {
+		b += m.currentList().View()
 	}
-
-	// List
-	cur := m.currentList()
-	b += cur.View()
 
 	b += "\n" + m.renderStatusBar()
 
@@ -502,11 +495,14 @@ func (m model) renderStatusBar() string {
 	left = leftStyle.Render(left)
 	hints = hintStyle.Render(hints)
 
-	// Lay the hints out flush-right, padding the gap to the terminal width. If
-	// the two halves don't fit, just join them with a separator.
+	// Lay the hints out flush-right, padding the gap to the terminal width. When
+	// the two halves don't fit, join them with a single space and truncate to
+	// the terminal width so the bar never wraps onto a second row (which would
+	// overflow the single reserved status-bar line).
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(hints)
 	if gap < 1 {
-		return lipgloss.JoinHorizontal(lipgloss.Left, left, " ", hints)
+		bar := lipgloss.JoinHorizontal(lipgloss.Left, left, " ", hints)
+		return ansi.Truncate(bar, m.width, "…")
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Left, left, lipgloss.NewStyle().Width(gap).Render(""), hints)
 }
