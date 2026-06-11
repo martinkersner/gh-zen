@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -168,6 +169,101 @@ func TestStatusBarShowsFilterQuery(t *testing.T) {
 	}
 	if strings.Contains(bar, "Issues") {
 		t.Errorf("status bar should not show mode label in filter display: %q", bar)
+	}
+}
+
+// While a fetch is in flight the status bar surfaces a loading indicator that
+// clears once data arrives — covering the list view's initial load/refresh,
+// where the body may already be populated.
+func TestStatusBarShowsLoadingIndicator(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// newModel starts with loading=true, so the bar must show the indicator.
+	if !strings.Contains(tm.(model).renderStatusBar(), loadingIndicator) {
+		t.Errorf("status bar missing loading indicator while loading: %q", tm.(model).renderStatusBar())
+	}
+
+	// Once data arrives the loading flag clears and so must the indicator.
+	tm, _ = tm.Update(dataMsg{
+		issues: []list.Item{item{number: 1, title: "a", type_: "issue"}},
+	})
+	if mm := tm.(model); mm.loading {
+		t.Fatal("loading flag should clear after dataMsg")
+	}
+	if strings.Contains(tm.(model).renderStatusBar(), loadingIndicator) {
+		t.Errorf("status bar should clear loading indicator once loaded: %q", tm.(model).renderStatusBar())
+	}
+}
+
+// A manual/background refresh of already-loaded content re-shows the indicator
+// even though the body stays populated — refreshCurrentView sets m.loading so
+// the bar reflects the in-flight fetch.
+func TestStatusBarShowsLoadingIndicatorOnRefresh(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: []list.Item{item{number: 1, title: "a", type_: "issue"}}})
+	if strings.Contains(tm.(model).renderStatusBar(), loadingIndicator) {
+		t.Fatal("setup: indicator should be clear after initial load")
+	}
+
+	// Pressing r triggers a refresh; the indicator must reappear while in flight.
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if mm := tm.(model); !mm.loading {
+		t.Fatal("refresh should set loading=true")
+	}
+	if !strings.Contains(tm.(model).renderStatusBar(), loadingIndicator) {
+		t.Errorf("status bar missing loading indicator during refresh: %q", tm.(model).renderStatusBar())
+	}
+}
+
+// The loading indicator also clears when a fetch errors, so the bar never
+// reports activity that has already failed.
+func TestStatusBarClearsLoadingIndicatorOnError(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(errMsg{err: errors.New("boom")})
+
+	if mm := tm.(model); mm.loading {
+		t.Fatal("loading flag should clear after errMsg")
+	}
+	if strings.Contains(tm.(model).renderStatusBar(), loadingIndicator) {
+		t.Errorf("status bar should clear loading indicator on error: %q", tm.(model).renderStatusBar())
+	}
+}
+
+// A lazily-fetched detail body / PR diff has no body placeholder once the body
+// is populated, so the status-bar indicator is the only feedback — it must show
+// while detailLoading or detailDiffLoading is set.
+func TestStatusBarShowsLoadingIndicatorForDetail(t *testing.T) {
+	m := newModel()
+	m.loading = false
+	m.detailOpen = true
+	m.detailItem = &item{number: 5, title: "x", type_: "pr"}
+	m.detailLoading = true
+	m.width = 80
+
+	if !strings.Contains(m.renderStatusBar(), loadingIndicator) {
+		t.Errorf("status bar missing loading indicator while detailLoading: %q", m.renderStatusBar())
+	}
+
+	// Indicator must coexist with the item kind already shown on the left.
+	if !strings.Contains(m.renderStatusBar(), "Pull Request") {
+		t.Errorf("status bar dropped item kind while loading: %q", m.renderStatusBar())
+	}
+
+	m.detailLoading = false
+	m.detailDiffLoading = true
+	if !strings.Contains(m.renderStatusBar(), loadingIndicator) {
+		t.Errorf("status bar missing loading indicator while detailDiffLoading: %q", m.renderStatusBar())
+	}
+
+	m.detailDiffLoading = false
+	if strings.Contains(m.renderStatusBar(), loadingIndicator) {
+		t.Errorf("status bar should clear loading indicator when detail loads: %q", m.renderStatusBar())
 	}
 }
 

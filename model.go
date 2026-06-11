@@ -193,15 +193,23 @@ func (m *model) currentList() *list.Model {
 // lists. Selection and scroll position are preserved by the respective message
 // handlers (dataMsg restores the list index; bodyMsg keeps the viewport offset
 // on a same-item refresh).
-func (m model) refreshCurrentView() tea.Cmd {
+//
+// It sets the matching loading flag so the status-bar indicator (see
+// renderStatusBar) reflects in-flight background fetches even though the body
+// stays populated; the flag is cleared by the corresponding message handler on
+// completion or error. Pointer receiver so the flag set persists in the caller.
+func (m *model) refreshCurrentView() tea.Cmd {
 	if m.detailOpen && m.detailItem != nil {
 		// In the PR diff sub-view, refresh the diff rather than the body so the
 		// visible content is what actually gets updated.
 		if m.detailShowDiff {
+			m.detailDiffLoading = true
 			return m.cmdFetchDiff(m.detailItem)
 		}
+		m.detailLoading = true
 		return m.cmdFetchBody(m.detailItem)
 	}
+	m.loading = true
 	return fetchIssuesAndPRs()
 }
 
@@ -330,6 +338,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailOpen = false
 				m.detailItem = nil
 				m.detailShowDiff = false
+				// Clear any in-flight detail/diff loading so the status-bar
+				// indicator doesn't stick: once the item is nil the bodyMsg/diffMsg
+				// handlers' cacheKey guard no longer matches and would never reset
+				// these flags.
+				m.detailLoading = false
+				m.detailDiffLoading = false
 				m.exitDetailSearch()
 				return m, nil
 			case "/":
@@ -813,8 +827,11 @@ func (m model) renderList() string {
 // renderStatusBar renders the one-line bar pinned to the bottom of the screen.
 // In the list view the left side shows the active filter query when filtering
 // (otherwise it is empty — the mode is conveyed by the tabs row above); in the
-// detail view it shows the item kind. The right side shows context-aware key
-// hints. It is rendered in both the list and detail views.
+// detail view it shows the item kind. While a fetch is in flight the left side
+// is prefixed with a loading indicator (see loadingIndicator) so activity stays
+// visible even when the body is already populated (refresh, lazy diff). The
+// right side shows context-aware key hints. It is rendered in both the list and
+// detail views.
 func (m model) renderStatusBar() string {
 	leftStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Bold(true)
 	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
@@ -852,6 +869,19 @@ func (m model) renderStatusBar() string {
 			if q := cur.FilterValue(); q != "" {
 				left = searchBarLeft(q, false)
 			}
+		}
+	}
+
+	// While any fetch is in flight (initial load, refresh, or a lazily-fetched
+	// detail body / PR diff) surface an unobtrusive indicator on the left rather
+	// than relying solely on the body placeholder — this also covers background
+	// refreshes where the body is already populated. It clears automatically once
+	// the loading flags are reset on completion or error.
+	if m.loading || m.detailLoading || m.detailDiffLoading {
+		if left == "" {
+			left = loadingIndicator
+		} else {
+			left = loadingIndicator + " · " + left
 		}
 	}
 
