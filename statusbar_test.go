@@ -197,6 +197,28 @@ func TestStatusBarShowsLoadingIndicator(t *testing.T) {
 	}
 }
 
+// A manual/background refresh of already-loaded content re-shows the indicator
+// even though the body stays populated — refreshCurrentView sets m.loading so
+// the bar reflects the in-flight fetch.
+func TestStatusBarShowsLoadingIndicatorOnRefresh(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: []list.Item{item{number: 1, title: "a", type_: "issue"}}})
+	if strings.Contains(tm.(model).renderStatusBar(), loadingIndicator) {
+		t.Fatal("setup: indicator should be clear after initial load")
+	}
+
+	// Pressing r triggers a refresh; the indicator must reappear while in flight.
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if mm := tm.(model); !mm.loading {
+		t.Fatal("refresh should set loading=true")
+	}
+	if !strings.Contains(tm.(model).renderStatusBar(), loadingIndicator) {
+		t.Errorf("status bar missing loading indicator during refresh: %q", tm.(model).renderStatusBar())
+	}
+}
+
 // The loading indicator also clears when a fetch errors, so the bar never
 // reports activity that has already failed.
 func TestStatusBarClearsLoadingIndicatorOnError(t *testing.T) {

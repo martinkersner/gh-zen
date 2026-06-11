@@ -193,15 +193,23 @@ func (m *model) currentList() *list.Model {
 // lists. Selection and scroll position are preserved by the respective message
 // handlers (dataMsg restores the list index; bodyMsg keeps the viewport offset
 // on a same-item refresh).
-func (m model) refreshCurrentView() tea.Cmd {
+//
+// It sets the matching loading flag so the status-bar indicator (see
+// renderStatusBar) reflects in-flight background fetches even though the body
+// stays populated; the flag is cleared by the corresponding message handler on
+// completion or error. Pointer receiver so the flag set persists in the caller.
+func (m *model) refreshCurrentView() tea.Cmd {
 	if m.detailOpen && m.detailItem != nil {
 		// In the PR diff sub-view, refresh the diff rather than the body so the
 		// visible content is what actually gets updated.
 		if m.detailShowDiff {
+			m.detailDiffLoading = true
 			return m.cmdFetchDiff(m.detailItem)
 		}
+		m.detailLoading = true
 		return m.cmdFetchBody(m.detailItem)
 	}
+	m.loading = true
 	return fetchIssuesAndPRs()
 }
 
@@ -330,6 +338,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailOpen = false
 				m.detailItem = nil
 				m.detailShowDiff = false
+				// Clear any in-flight detail/diff loading so the status-bar
+				// indicator doesn't stick: once the item is nil the bodyMsg/diffMsg
+				// handlers' cacheKey guard no longer matches and would never reset
+				// these flags.
+				m.detailLoading = false
+				m.detailDiffLoading = false
 				m.exitDetailSearch()
 				return m, nil
 			case "/":
