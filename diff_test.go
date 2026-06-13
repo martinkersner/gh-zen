@@ -183,8 +183,11 @@ func TestDiffFetchErrorShown(t *testing.T) {
 	if mm.detailDiffLoading {
 		t.Error("detailDiffLoading should be cleared after a failed fetch")
 	}
-	if !strings.Contains(mm.detailDiff, "Error loading diff") {
-		t.Errorf("expected diff error message, got %q", mm.detailDiff)
+	if mm.detailDiffErr == nil {
+		t.Error("expected detailDiffErr to be set after a failed fetch")
+	}
+	if !strings.Contains(mm.detailDiffContent(), "Error loading diff") {
+		t.Errorf("expected diff error message in view, got %q", mm.detailDiffContent())
 	}
 }
 

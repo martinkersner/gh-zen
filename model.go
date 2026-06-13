@@ -206,6 +206,11 @@ type model struct {
 	detailShowDiff    bool
 	detailDiff        string
 	detailDiffLoading bool
+	// detailDiffErr holds a failed diff fetch so the render/offset branches can
+	// detect the error state from its own field rather than sniffing detailDiff
+	// for a sentinel message. Nil means no error; the user-facing "Error loading
+	// diff" text is formatted from it at display time.
+	detailDiffErr error
 
 	// Parsed view of the current PR diff and its presentation toggles. The diff
 	// text (detailDiff) is parsed once per delivery into detailFiles; the diff
@@ -625,7 +630,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.detailOpen && m.detailItem != nil && cacheKey(m.detailItem) == msg.key {
 				m.detailDiffLoading = false
 				if m.detailShowDiff {
-					m.detailDiff = fmt.Sprintf("Error loading diff: %v", msg.err)
+					m.detailDiffErr = msg.err
+					m.detailDiff = ""
 					m.detailFiles = nil
 					m.detailFileOffsets = nil
 					m.detailViewport.SetContent(m.detailContent())
@@ -869,8 +875,8 @@ func (m model) detailDiffContent() string {
 	if m.detailDiffLoading {
 		return lipgloss.NewStyle().Width(w).Render("Loading diff...")
 	}
-	if strings.HasPrefix(m.detailDiff, "Error loading diff") {
-		return lipgloss.NewStyle().Width(w).Render(m.detailDiff)
+	if m.detailDiffErr != nil {
+		return lipgloss.NewStyle().Width(w).Render(m.detailDiffErrText())
 	}
 	if m.detailShowOverview {
 		return renderFileOverview(m.detailFiles, m.detailActiveFile, w)
@@ -904,7 +910,7 @@ func (m model) diffFileOffsets() []int {
 	if m.detailDiffLoading || m.detailShowOverview || len(m.detailFiles) == 0 {
 		return nil
 	}
-	if strings.HasPrefix(m.detailDiff, "Error loading diff") {
+	if m.detailDiffErr != nil {
 		return nil
 	}
 	w, _ := detailViewportSize(m.width, m.height, detailHeaderHeight)
@@ -917,8 +923,18 @@ func (m model) diffFileOffsets() []int {
 // first file.
 func (m *model) setDetailDiff(diff string) {
 	m.detailDiff = diff
+	m.detailDiffErr = nil
 	m.detailFiles = parseDiff(diff)
 	m.detailActiveFile = 0
+}
+
+// detailDiffErrText is the user-facing message shown in place of the diff when a
+// fetch failed. Empty when there is no error.
+func (m model) detailDiffErrText() string {
+	if m.detailDiffErr == nil {
+		return ""
+	}
+	return fmt.Sprintf("Error loading diff: %v", m.detailDiffErr)
 }
 
 // refreshDiffView re-renders the diff sub-view content into the viewport and
@@ -932,9 +948,9 @@ func (m *model) refreshDiffView() {
 	case m.detailDiffLoading:
 		m.detailFileOffsets = nil
 		m.detailViewport.SetContent(lipgloss.NewStyle().Width(w).Render("Loading diff..."))
-	case strings.HasPrefix(m.detailDiff, "Error loading diff"):
+	case m.detailDiffErr != nil:
 		m.detailFileOffsets = nil
-		m.detailViewport.SetContent(lipgloss.NewStyle().Width(w).Render(m.detailDiff))
+		m.detailViewport.SetContent(lipgloss.NewStyle().Width(w).Render(m.detailDiffErrText()))
 	case m.detailShowOverview:
 		m.detailFileOffsets = nil
 		m.detailViewport.SetContent(renderFileOverview(m.detailFiles, m.detailActiveFile, w))
