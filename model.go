@@ -133,7 +133,7 @@ func renderTitle(title string, prefixLen int, matches []int, isFiltered bool, ro
 	}
 	// Frame-only wrapper: keep padding/border from rowStyle but drop its
 	// foreground so the per-rune colors above aren't overridden.
-	frame := rowStyle.Copy().UnsetForeground().UnsetInline()
+	frame := rowStyle.UnsetForeground()
 	return frame.Render(b.String())
 }
 
