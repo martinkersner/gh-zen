@@ -221,7 +221,12 @@ func renderUnified(files []fileDiff, width int) (string, []int) {
 		for _, h := range f.hunks {
 			emit(diffMetaStyle.Render(h.header))
 			for _, dl := range h.lines {
-				emit(renderDiffContentLine(dl, width))
+				// A long content line soft-wraps into multiple physical rows;
+				// emit each so the line counter (and thus file offsets) tracks
+				// rendered rows, keeping navigation aligned (see refreshDiffView).
+				for _, row := range renderDiffContentLine(dl, width) {
+					emit(row)
+				}
 			}
 		}
 	}
@@ -229,9 +234,13 @@ func renderUnified(files []fileDiff, width int) (string, []int) {
 }
 
 // renderDiffContentLine renders one hunk content line with its +/-/space marker
-// restored and colored by kind, truncated to width (when >0) so a long line
-// doesn't wrap and break the per-file line accounting used for navigation.
-func renderDiffContentLine(dl diffLine, width int) string {
+// restored and colored by kind. When width > 0 the line is soft-wrapped to that
+// width and returned as one styled string per physical row (so callers can count
+// rendered rows for the per-file line accounting used by navigation); the marker
+// sits on the first row and continuation rows carry only wrapped text. Coloring
+// is applied per row so styling survives the wrap. width <= 0 yields a single
+// unwrapped row.
+func renderDiffContentLine(dl diffLine, width int) []string {
 	var marker string
 	var style lipgloss.Style
 	switch dl.kind {
@@ -243,10 +252,22 @@ func renderDiffContentLine(dl diffLine, width int) string {
 		marker, style = " ", lipgloss.NewStyle()
 	}
 	text := marker + dl.text
-	if width > 0 {
-		text = ansi.Truncate(text, width, "…")
+	return wrapStyled(text, style, width)
+}
+
+// wrapStyled hard-wraps plain text to width visible columns and styles each
+// resulting physical row, returning one string per row. width <= 0 (or text that
+// fits) yields a single row. Wrapping happens on the unstyled text so the wrap
+// math isn't thrown off by color escapes; styling is then applied per row.
+func wrapStyled(text string, style lipgloss.Style, width int) []string {
+	if width <= 0 || ansi.StringWidth(text) <= width {
+		return []string{style.Render(text)}
 	}
-	return style.Render(text)
+	rows := strings.Split(ansi.Hardwrap(text, width, false), "\n")
+	for i, r := range rows {
+		rows[i] = style.Render(r)
+	}
+	return rows
 }
 
 // minColumnWidth is the smallest per-column width at which the side-by-side
@@ -292,9 +313,28 @@ func renderSideBySide(files []fileDiff, width int) (string, []int) {
 		for _, h := range f.hunks {
 			emit(diffMetaStyle.Render(h.header))
 			for _, row := range pairHunkLines(h.lines) {
+				// Each cell soft-wraps to its column width independently; the two
+				// sides may produce a different number of physical rows, so pad
+				// the shorter side with blank cells and emit one joined row per
+				// physical line. The line counter advances per emitted row so file
+				// offsets track rendered rows (see refreshDiffView).
 				left := renderColumnCell(row.left, lineDel, col)
 				right := renderColumnCell(row.right, lineAdd, col)
-				emit(left + sep + right)
+				n := len(left)
+				if len(right) > n {
+					n = len(right)
+				}
+				blank := strings.Repeat(" ", col)
+				for k := 0; k < n; k++ {
+					l, r := blank, blank
+					if k < len(left) {
+						l = left[k]
+					}
+					if k < len(right) {
+						r = right[k]
+					}
+					emit(l + sep + r)
+				}
 			}
 		}
 	}
@@ -354,15 +394,16 @@ func pairHunkLines(lines []diffLine) []sideRow {
 	return rows
 }
 
-// renderColumnCell renders one side's cell to exactly width visible columns:
-// the line's text (no marker — the column position conveys old vs new), colored
-// by fallbackKind for changed lines and uncolored for context, truncated and
-// right-padded to width. A nil line yields blank padding.
-func renderColumnCell(dl *diffLine, fallbackKind diffLineKind, width int) string {
+// renderColumnCell renders one side's cell (no marker — the column position
+// conveys old vs new), colored by kind for changed lines and uncolored for
+// context, soft-wrapped to width and right-padded so every physical row is
+// exactly width visible columns. Returns one string per physical row; a nil line
+// yields a single blank row.
+func renderColumnCell(dl *diffLine, fallbackKind diffLineKind, width int) []string {
+	blank := strings.Repeat(" ", width)
 	if dl == nil {
-		return strings.Repeat(" ", width)
+		return []string{blank}
 	}
-	text := ansi.Truncate(dl.text, width, "…")
 	var style lipgloss.Style
 	switch dl.kind {
 	case lineAdd:
@@ -372,13 +413,18 @@ func renderColumnCell(dl *diffLine, fallbackKind diffLineKind, width int) string
 	default:
 		style = lipgloss.NewStyle()
 	}
-	// Pad to full column width on the visible (unstyled) text so the separator
-	// and right column align regardless of color escapes.
-	pad := width - ansi.StringWidth(text)
-	if pad < 0 {
-		pad = 0
+	plainRows := strings.Split(ansi.Hardwrap(dl.text, width, false), "\n")
+	rows := make([]string, len(plainRows))
+	for i, r := range plainRows {
+		// Pad to full column width on the visible (unstyled) text so the
+		// separator and right column align regardless of color escapes.
+		pad := width - ansi.StringWidth(r)
+		if pad < 0 {
+			pad = 0
+		}
+		rows[i] = style.Render(r) + strings.Repeat(" ", pad)
 	}
-	return style.Render(text) + strings.Repeat(" ", pad)
+	return rows
 }
 
 // renderFileOverview renders the changed-files overview: one row per file with
