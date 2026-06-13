@@ -42,12 +42,51 @@ func markdownRenderer(width int) *glamour.TermRenderer {
 	return r
 }
 
+// A single in-detail search keystroke (or resize) projects the body two ways
+// from the same render — the plain text for findMatches and the styled lines
+// for highlighting — so renderMarkdown is called twice back-to-back with the
+// identical (body, width). The glamour render is the expensive part, so the
+// most recent result is memoized keyed by (body, width): the second call of a
+// pair is a cache hit, and any body/width change makes a new key (which evicts
+// the previous one), so the cache stays a single entry and never goes stale.
+var (
+	mdRenderMu        sync.Mutex
+	mdRenderCacheBody string
+	mdRenderCacheW    int
+	mdRenderCacheOut  string
+	mdRenderCacheOK   bool
+)
+
 // renderMarkdown renders GitHub-flavored markdown to styled terminal output
 // (containing ANSI escapes) word-wrapped to width. On any rendering failure it
 // falls back to the raw body so the detail view never goes blank. glamour adds
 // surrounding blank lines and a trailing newline; those are trimmed so the
 // body sits flush at the top of the viewport like the previous plain wrapping.
+//
+// The result is memoized for the most recent (body, width) so the doubled call
+// per search keystroke / resize renders through glamour at most once.
 func renderMarkdown(body string, width int) string {
+	mdRenderMu.Lock()
+	if mdRenderCacheOK && mdRenderCacheW == width && mdRenderCacheBody == body {
+		out := mdRenderCacheOut
+		mdRenderMu.Unlock()
+		return out
+	}
+	mdRenderMu.Unlock()
+
+	out := renderMarkdownUncached(body, width)
+
+	mdRenderMu.Lock()
+	mdRenderCacheBody = body
+	mdRenderCacheW = width
+	mdRenderCacheOut = out
+	mdRenderCacheOK = true
+	mdRenderMu.Unlock()
+	return out
+}
+
+// renderMarkdownUncached performs the actual glamour render (no memoization).
+func renderMarkdownUncached(body string, width int) string {
 	r := markdownRenderer(width)
 	if r == nil {
 		return body
