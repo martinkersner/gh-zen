@@ -108,3 +108,25 @@ func TestTabBracketsShowZeroAfterEmptyFetch(t *testing.T) {
 		t.Errorf("tabs missing %q after empty fetch: %q", "PRs (0)", tabs)
 	}
 }
+
+// The empty-state "No items." text must be indented to column 2 so it aligns
+// with the tab labels and the item titles in a populated list (issue #68).
+func TestEmptyStateAlignedToColumnTwo(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: nil, prs: nil})
+	mm := tm.(model)
+
+	for _, tc := range []struct {
+		name string
+		view string
+	}{
+		{"issues", mm.issueList.View()},
+		{"prs", mm.prList.View()},
+	} {
+		if !strings.HasPrefix(tc.view, "  No items.") {
+			t.Errorf("%s empty view not indented to column 2: %q", tc.name, tc.view)
+		}
+	}
+}

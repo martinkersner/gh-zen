@@ -171,6 +171,12 @@ func newModel() model {
 	m.issueList.SetShowFilter(false)
 	m.prList.SetShowFilter(false)
 
+	// Indent the empty-state ("No items.") text to column 2 so it aligns with
+	// the tab labels and the list item titles above it (the bubbles default
+	// NoItems style has no PaddingLeft). Preserve the default subdued color.
+	m.issueList.Styles.NoItems = m.issueList.Styles.NoItems.PaddingLeft(2)
+	m.prList.Styles.NoItems = m.prList.Styles.NoItems.PaddingLeft(2)
+
 	// Move with ctrl+n / ctrl+p (and arrows); drop j/k.
 	up := key.NewBinding(key.WithKeys("up", "ctrl+p"), key.WithHelp("ctrl+p", "up"))
 	down := key.NewBinding(key.WithKeys("down", "ctrl+n"), key.WithHelp("ctrl+n", "down"))
