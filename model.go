@@ -875,18 +875,25 @@ func (m model) detailDiffContent() string {
 	if m.detailShowOverview {
 		return renderFileOverview(m.detailFiles, m.detailActiveFile, w)
 	}
+	content, _ := m.renderDiffStructure(w)
+	return content
+}
+
+// renderDiffStructure renders the parsed diff in the active layout (unified or
+// side-by-side) and returns the content plus the per-file header line offsets
+// from the same render pass, so callers that need both (refreshDiffView) don't
+// render twice. When there is no parsed structure (empty/unrecognized diff) it
+// returns the plain colorized fallback and nil offsets.
+func (m model) renderDiffStructure(width int) (string, []int) {
 	if len(m.detailFiles) == 0 {
 		// No parsed structure (empty diff or unrecognized format); fall back to
 		// the plain colorized text so nothing is silently dropped.
-		return colorizeDiff(m.detailDiff)
+		return colorizeDiff(m.detailDiff), nil
 	}
-	var content string
 	if m.detailSplitView {
-		content, _ = renderSideBySide(m.detailFiles, w)
-	} else {
-		content, _ = renderUnified(m.detailFiles, w)
+		return renderSideBySide(m.detailFiles, width)
 	}
-	return content
+	return renderUnified(m.detailFiles, width)
 }
 
 // diffFileOffsets returns the file-header line offsets for the current diff
@@ -901,12 +908,7 @@ func (m model) diffFileOffsets() []int {
 		return nil
 	}
 	w, _ := detailViewportSize(m.width, m.height, detailHeaderHeight)
-	var offsets []int
-	if m.detailSplitView {
-		_, offsets = renderSideBySide(m.detailFiles, w)
-	} else {
-		_, offsets = renderUnified(m.detailFiles, w)
-	}
+	_, offsets := m.renderDiffStructure(w)
 	return offsets
 }
 
@@ -920,12 +922,27 @@ func (m *model) setDetailDiff(diff string) {
 }
 
 // refreshDiffView re-renders the diff sub-view content into the viewport and
-// recomputes the file-header offsets for the current layout/width. Scroll
-// position is preserved.
+// recomputes the file-header offsets for the current layout/width in a single
+// render pass. Scroll position is preserved. For the loading/error/overview
+// cases (no structured diff) it renders the placeholder/pane and clears offsets.
 func (m *model) refreshDiffView() {
 	offset := m.detailViewport.YOffset
-	m.detailFileOffsets = m.diffFileOffsets()
-	m.detailViewport.SetContent(m.detailContent())
+	w, _ := detailViewportSize(m.width, m.height, detailHeaderHeight)
+	switch {
+	case m.detailDiffLoading:
+		m.detailFileOffsets = nil
+		m.detailViewport.SetContent(lipgloss.NewStyle().Width(w).Render("Loading diff..."))
+	case strings.HasPrefix(m.detailDiff, "Error loading diff"):
+		m.detailFileOffsets = nil
+		m.detailViewport.SetContent(lipgloss.NewStyle().Width(w).Render(m.detailDiff))
+	case m.detailShowOverview:
+		m.detailFileOffsets = nil
+		m.detailViewport.SetContent(renderFileOverview(m.detailFiles, m.detailActiveFile, w))
+	default:
+		content, offsets := m.renderDiffStructure(w)
+		m.detailFileOffsets = offsets
+		m.detailViewport.SetContent(content)
+	}
 	m.detailViewport.SetYOffset(offset)
 }
 

@@ -117,6 +117,40 @@ func TestDiffFileNavigation(t *testing.T) {
 	}
 }
 
+// With a viewport shorter than the diff, ] scrolls to a later file's header
+// offset and [ scrolls back — i.e. navigation moves the visible window, not just
+// the active-file cursor.
+func TestDiffFileNavigationScrolls(t *testing.T) {
+	// Short height so the rendered diff exceeds the viewport and offsets are
+	// reachable (maxOffset > 0).
+	tm := openDiffView(t, 120, 10)
+	mm := tm.(model)
+	if mm.detailViewport.YOffset != 0 {
+		t.Fatalf("initial YOffset = %d, want 0", mm.detailViewport.YOffset)
+	}
+	lastOffset := mm.detailFileOffsets[len(mm.detailFileOffsets)-1]
+	maxOffset := mm.detailViewport.TotalLineCount() - mm.detailViewport.Height
+	if maxOffset <= 0 || lastOffset <= 0 {
+		t.Skipf("diff not tall enough to scroll (max=%d last=%d)", maxOffset, lastOffset)
+	}
+
+	// Jump to the last file: offset should move downward.
+	for i := 0; i < len(mm.detailFileOffsets); i++ {
+		tm = press(tm, "]")
+	}
+	if got := tm.(model).detailViewport.YOffset; got == 0 {
+		t.Errorf("] did not scroll viewport (YOffset still 0)")
+	}
+
+	// Jump back to the first file: offset should return toward the top.
+	for i := 0; i < len(mm.detailFileOffsets); i++ {
+		tm = press(tm, "[")
+	}
+	if got := tm.(model).detailViewport.YOffset; got != 0 {
+		t.Errorf("[ back to first file YOffset = %d, want 0", got)
+	}
+}
+
 func TestDiffOverviewToggle(t *testing.T) {
 	tm := openDiffView(t, 120, 40)
 	tm = press(tm, "f")
