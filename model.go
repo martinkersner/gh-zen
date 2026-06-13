@@ -148,13 +148,26 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	}
 	s := &d.styles
 	title := it.Title()
-	textwidth := m.Width() - s.NormalTitle.GetPaddingLeft() - s.NormalTitle.GetPaddingRight()
-	title = ansi.Truncate(title, textwidth, "…")
-	prefixLen := numberPrefixLen(title)
 
 	isSelected := index == m.Index()
 	emptyFilter := m.FilterState() == list.Filtering && m.FilterValue() == ""
 	isFiltered := m.FilterState() == list.Filtering || m.FilterState() == list.FilterApplied
+
+	// Pick the row style first so the available text width is derived from that
+	// style's own horizontal frame (padding + border). SelectedTitle pads 1 but
+	// adds a 1-col left border, while NormalTitle pads 2 with no border; using
+	// each style's GetHorizontalFrameSize keeps long titles truncating at the
+	// same visible column regardless of selection.
+	rowStyle := s.NormalTitle
+	switch {
+	case emptyFilter:
+		rowStyle = s.DimmedTitle
+	case isSelected:
+		rowStyle = s.SelectedTitle
+	}
+	textwidth := m.Width() - rowStyle.GetHorizontalFrameSize()
+	title = ansi.Truncate(title, textwidth, "…")
+	prefixLen := numberPrefixLen(title)
 
 	switch {
 	case emptyFilter:
