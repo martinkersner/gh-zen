@@ -39,6 +39,22 @@ func (m model) currentShortcuts() []shortcut {
 				verb = "show body"
 			}
 			s = append(s, shortcut{"d", verb})
+			// The diff sub-view adds layout/navigation keys.
+			if m.detailShowDiff {
+				splitVerb := "split view"
+				if m.detailSplitView {
+					splitVerb = "unified view"
+				}
+				overviewVerb := "files overview"
+				if m.detailShowOverview {
+					overviewVerb = "hide overview"
+				}
+				s = append(s,
+					shortcut{"s", splitVerb},
+					shortcut{"]/[", "next/prev file"},
+					shortcut{"f", overviewVerb},
+				)
+			}
 		}
 		s = append(s,
 			shortcut{"/", "search"},
