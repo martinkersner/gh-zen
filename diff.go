@@ -259,11 +259,13 @@ func renderDiffContentLine(dl diffLine, width int) []string {
 // resulting physical row, returning one string per row. width <= 0 (or text that
 // fits) yields a single row. Wrapping happens on the unstyled text so the wrap
 // math isn't thrown off by color escapes; styling is then applied per row.
+// preserveSpace is true so spaces at a wrap boundary (indentation, separators in
+// source lines) survive on the continuation row instead of being dropped.
 func wrapStyled(text string, style lipgloss.Style, width int) []string {
 	if width <= 0 || ansi.StringWidth(text) <= width {
 		return []string{style.Render(text)}
 	}
-	rows := strings.Split(ansi.Hardwrap(text, width, false), "\n")
+	rows := strings.Split(ansi.Hardwrap(text, width, true), "\n")
 	for i, r := range rows {
 		rows[i] = style.Render(r)
 	}
@@ -295,6 +297,7 @@ func renderSideBySide(files []fileDiff, width int) (string, []int) {
 	}
 	col := (width - sideBySideGap) / 2
 	sep := diffMutedStyle.Render(" │ ")
+	blank := strings.Repeat(" ", col)
 
 	var b strings.Builder
 	offsets := make([]int, 0, len(files))
@@ -324,7 +327,6 @@ func renderSideBySide(files []fileDiff, width int) (string, []int) {
 				if len(right) > n {
 					n = len(right)
 				}
-				blank := strings.Repeat(" ", col)
 				for k := 0; k < n; k++ {
 					l, r := blank, blank
 					if k < len(left) {
@@ -413,7 +415,9 @@ func renderColumnCell(dl *diffLine, fallbackKind diffLineKind, width int) []stri
 	default:
 		style = lipgloss.NewStyle()
 	}
-	plainRows := strings.Split(ansi.Hardwrap(dl.text, width, false), "\n")
+	// preserveSpace keeps boundary spaces (indentation/separators) on continuation
+	// rows rather than dropping them.
+	plainRows := strings.Split(ansi.Hardwrap(dl.text, width, true), "\n")
 	rows := make([]string, len(plainRows))
 	for i, r := range plainRows {
 		// Pad to full column width on the visible (unstyled) text so the

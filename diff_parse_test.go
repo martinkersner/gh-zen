@@ -302,7 +302,7 @@ func TestRenderUnifiedWrapMarkerAndColor(t *testing.T) {
 	// applying diffDelStyle to its hard-wrapped plain slice (so styling is per row,
 	// not just the first). Color escapes are stripped in non-TTY test runs, so we
 	// assert structural equality against an independently computed expectation.
-	wantPlain := strings.Split(ansi.Hardwrap("-"+dl.text, width, false), "\n")
+	wantPlain := strings.Split(ansi.Hardwrap("-"+dl.text, width, true), "\n")
 	if len(rows) != len(wantPlain) {
 		t.Fatalf("got %d rows, want %d", len(rows), len(wantPlain))
 	}
@@ -313,6 +313,27 @@ func TestRenderUnifiedWrapMarkerAndColor(t *testing.T) {
 		if w := ansi.StringWidth(r); w > width {
 			t.Errorf("row %d width %d > %d", i, w, width)
 		}
+	}
+}
+
+// A space at a wrap boundary (indentation / a separator between tokens) must
+// survive on the continuation row rather than being silently dropped, so the
+// reassembled rows reproduce the original source line exactly.
+func TestRenderDiffContentLineWrapPreservesSpaces(t *testing.T) {
+	const width = 6
+	text := "foofoo    bar" // 4 spaces of "indentation" straddle the wrap boundary
+	dl := diffLine{kind: lineContext, text: text}
+	rows := renderDiffContentLine(dl, width)
+	if len(rows) < 2 {
+		t.Fatalf("expected wrapping, got %d row(s)", len(rows))
+	}
+	var got strings.Builder
+	for _, r := range rows {
+		got.WriteString(ansi.Strip(r))
+	}
+	// Context line has a leading space marker, so the reassembled text is " "+text.
+	if want := " " + text; got.String() != want {
+		t.Errorf("wrapped+reassembled = %q, want %q (boundary spaces dropped)", got.String(), want)
 	}
 }
 
