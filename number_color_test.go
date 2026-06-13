@@ -75,6 +75,31 @@ func TestRenderTitleColorsNumberPrefix(t *testing.T) {
 	}
 }
 
+// When a prefix rune is also a filter match, the match decoration (underline)
+// wins over the number accent so highlighting stays consistent with the rest of
+// the title. Verifies catFor's match-first priority.
+func TestRenderTitleMatchWinsInPrefix(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	s := list.NewDefaultItemStyles()
+	number := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Inline(true)
+	title := "#12 hi"
+	prefixLen := numberPrefixLen(title) // 4: "#12 "
+
+	// Match the two digit runes (indexes 1 and 2) inside the prefix.
+	out := renderTitle(title, prefixLen, []int{1, 2}, true, s.NormalTitle, s.FilterMatch, number)
+	// FilterMatch sets underline (SGR 4); it must be present for the matched
+	// digits even though they fall inside the number prefix.
+	if !strings.Contains(out, "\x1b[") || !strings.Contains(out, "4m") {
+		t.Errorf("filter-match underline missing on matched prefix runes: %q", out)
+	}
+	if got := stripANSI(out); !strings.Contains(got, "#12 hi") {
+		t.Errorf("plain text not intact under filtering: %q", got)
+	}
+}
+
 // FilterValue stays plain (no ANSI) so substring filtering keeps matching on
 // "#<number> title".
 func TestFilterValuePlain(t *testing.T) {
@@ -87,7 +112,9 @@ func TestFilterValuePlain(t *testing.T) {
 	}
 }
 
-// stripANSI removes SGR escape sequences for plain-text assertions.
+// stripANSI removes SGR (ESC[...m) escape sequences for plain-text assertions.
+// It only handles m-terminated sequences, which is all lipgloss emits here; it
+// is not a general-purpose terminal escape stripper.
 func stripANSI(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {

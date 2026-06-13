@@ -84,12 +84,12 @@ func numberPrefixLen(title string) int {
 // prefix/match colors survive instead of being flattened by an outer foreground.
 func renderTitle(title string, prefixLen int, matches []int, isFiltered bool, rowStyle, filterMatch, numberStyle lipgloss.Style) string {
 	base := rowStyle.Inline(true)
-	// number overrides the base foreground with the accent color; Inherit would
-	// keep base's existing foreground, so set it explicitly on a copy.
-	number := base.Copy().UnsetForeground().Inherit(numberStyle)
+	// number overrides the base foreground with the accent color; Inherit keeps
+	// existing set fields, so clear the foreground first before inheriting it.
+	number := base.UnsetForeground().Inherit(numberStyle)
 	// matched layers the filter-match decoration (underline) on top of base; it
 	// sets no foreground, so the row/number foreground shows through.
-	matched := base.Copy().Inherit(filterMatch)
+	matched := base.Inherit(filterMatch)
 	if !isFiltered {
 		matches = nil
 	}
