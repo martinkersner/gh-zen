@@ -648,18 +648,39 @@ var (
 	detailActiveMatchStyle = lipgloss.NewStyle().Background(lipgloss.Color("#e0af68")).Foreground(lipgloss.Color("#1a1b26")).Bold(true)
 )
 
-// detailWrappedLines returns the detail body (or a loading placeholder) wrapped
-// to the viewport width, split into individual lines. The same wrapping is used
-// both to render the viewport content and to locate search matches, so match
-// line/column offsets line up exactly with what's displayed.
+// detailWrappedLines returns the detail body rendered as styled terminal
+// markdown (GitHub-flavored: headings, lists, code fences, emphasis, links)
+// wrapped to the viewport width, split into individual lines. The returned
+// lines contain glamour's ANSI escapes and are the single source of truth for
+// what the viewport displays; detailPlainLines projects them back to visible
+// text so search match offsets stay aligned with this output (see findMatches).
+//
+// The "Loading body..." placeholder and an empty body are wrapped with lipgloss
+// rather than run through markdown rendering, so they render as plain text.
 func (m model) detailWrappedLines() []string {
-	body := m.detailBody
-	if m.detailLoading {
-		body = "Loading body..."
-	}
 	w, _ := detailViewportSize(m.width, m.height, detailHeaderHeight)
-	wrapped := lipgloss.NewStyle().Width(w).Render(body)
-	return strings.Split(wrapped, "\n")
+	if m.detailLoading {
+		wrapped := lipgloss.NewStyle().Width(w).Render("Loading body...")
+		return strings.Split(wrapped, "\n")
+	}
+	if strings.TrimSpace(m.detailBody) == "" {
+		wrapped := lipgloss.NewStyle().Width(w).Render(m.detailBody)
+		return strings.Split(wrapped, "\n")
+	}
+	return strings.Split(renderMarkdown(m.detailBody, w), "\n")
+}
+
+// detailPlainLines returns the visible-text projection of detailWrappedLines:
+// the same lines with glamour's ANSI escapes stripped. Search matches are
+// computed over these so their line/column (rune) offsets line up with what
+// highlightStyledLine re-styles on the styled lines.
+func (m model) detailPlainLines() []string {
+	styled := m.detailWrappedLines()
+	plain := make([]string, len(styled))
+	for i, line := range styled {
+		plain[i] = ansi.Strip(line)
+	}
+	return plain
 }
 
 // detailBodyContent returns the viewport content for the detail body. When an
@@ -695,29 +716,12 @@ func (m model) detailBodyContent() string {
 		if li < 0 || li >= len(lines) {
 			continue
 		}
-		lines[li] = highlightLine(lines[li], hl.active, hl.other)
+		// lines contain glamour's ANSI escapes, so overlay the match styling
+		// with the ANSI-aware highlighter (column offsets come from the plain
+		// projection findMatches ran against).
+		lines[li] = highlightStyledLine(lines[li], hl.active, hl.other)
 	}
 	return strings.Join(lines, "\n")
-}
-
-// highlightLine renders line styling the runes in active with the active-match
-// style and those in other with the normal-match style, in a single pass.
-// Doing it in one pass (rather than two lipgloss.StyleRunes calls) avoids
-// re-indexing into a string that already contains ANSI escapes, which would
-// misalign the second set of indices once the first call inserted styling.
-func highlightLine(line string, active, other map[int]bool) string {
-	var b strings.Builder
-	for i, r := range []rune(line) {
-		switch {
-		case active[i]:
-			b.WriteString(detailActiveMatchStyle.Render(string(r)))
-		case other[i]:
-			b.WriteString(detailMatchStyle.Render(string(r)))
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // enterDetailSearch starts in-detail search mode with an empty query.
@@ -745,7 +749,7 @@ func (m *model) exitDetailSearch() {
 // highlighted content, and scrolls to the active match so the user sees a hit as
 // they type.
 func (m *model) refreshDetailSearch() {
-	m.detailMatches = findMatches(m.detailWrappedLines(), m.detailQuery)
+	m.detailMatches = findMatches(m.detailPlainLines(), m.detailQuery)
 	m.detailActiveMatch = 0
 	offset := m.detailViewport.YOffset
 	m.detailViewport.SetContent(m.detailBodyContent())
@@ -839,7 +843,7 @@ func (m *model) recomputeDetailMatches() {
 		m.detailActiveMatch = 0
 		return
 	}
-	m.detailMatches = findMatches(m.detailWrappedLines(), m.detailQuery)
+	m.detailMatches = findMatches(m.detailPlainLines(), m.detailQuery)
 	if m.detailActiveMatch >= len(m.detailMatches) {
 		m.detailActiveMatch = 0
 	}
