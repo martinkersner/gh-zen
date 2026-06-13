@@ -50,10 +50,91 @@ func (i item) Description() string { return "" }
 // ctrl+p are visible during search.
 type itemDelegate struct {
 	styles list.DefaultItemStyles
+	// number is the distinct color applied to the "#<number>" prefix so it
+	// stands out from the title text in both normal and selected rows.
+	number lipgloss.Style
 }
 
 func newItemDelegate() itemDelegate {
-	return itemDelegate{styles: list.NewDefaultItemStyles()}
+	return itemDelegate{
+		styles: list.NewDefaultItemStyles(),
+		number: lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Inline(true),
+	}
+}
+
+// numberPrefixLen returns the rune count of the "#<number> " prefix (including
+// the trailing space) for an item title of the form "#123 title". It is used to
+// color just the number prefix in a distinct style. Returns 0 if the title does
+// not start with the expected prefix.
+func numberPrefixLen(title string) int {
+	if !strings.HasPrefix(title, "#") {
+		return 0
+	}
+	if sp := strings.IndexByte(title, ' '); sp >= 0 {
+		return len([]rune(title[:sp+1]))
+	}
+	return len([]rune(title))
+}
+
+// renderTitle styles a single list row. The row's frame (left padding/border and
+// base foreground) comes from rowStyle; the leading "#<number> " prefix is
+// recolored with numberStyle so it stands out, and filter-matched runes get
+// filterMatch layered on. Per-rune coloring is done on the inline body and then
+// wrapped in a frame-only copy of rowStyle (foreground unset) so the embedded
+// prefix/match colors survive instead of being flattened by an outer foreground.
+func renderTitle(title string, prefixLen int, matches []int, isFiltered bool, rowStyle, filterMatch, numberStyle lipgloss.Style) string {
+	base := rowStyle.Inline(true)
+	// number overrides the base foreground with the accent color; Inherit would
+	// keep base's existing foreground, so set it explicitly on a copy.
+	number := base.Copy().UnsetForeground().Inherit(numberStyle)
+	// matched layers the filter-match decoration (underline) on top of base; it
+	// sets no foreground, so the row/number foreground shows through.
+	matched := base.Copy().Inherit(filterMatch)
+	if !isFiltered {
+		matches = nil
+	}
+
+	matchSet := make(map[int]bool, len(matches))
+	for _, idx := range matches {
+		matchSet[idx] = true
+	}
+	// catFor categorizes a rune so consecutive runes sharing a style can be
+	// rendered together: filter match wins, then the number prefix, then base.
+	catFor := func(i int) int {
+		switch {
+		case matchSet[i]:
+			return 2
+		case i < prefixLen:
+			return 1
+		default:
+			return 0
+		}
+	}
+	styleFor := func(cat int) lipgloss.Style {
+		switch cat {
+		case 2:
+			return matched
+		case 1:
+			return number
+		default:
+			return base
+		}
+	}
+	runes := []rune(title)
+	var b strings.Builder
+	for i := 0; i < len(runes); {
+		cat := catFor(i)
+		j := i + 1
+		for j < len(runes) && catFor(j) == cat {
+			j++
+		}
+		b.WriteString(styleFor(cat).Render(string(runes[i:j])))
+		i = j
+	}
+	// Frame-only wrapper: keep padding/border from rowStyle but drop its
+	// foreground so the per-rune colors above aren't overridden.
+	frame := rowStyle.Copy().UnsetForeground().UnsetInline()
+	return frame.Render(b.String())
 }
 
 func (d itemDelegate) Height() int                             { return 1 }
@@ -69,6 +150,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	title := it.Title()
 	textwidth := m.Width() - s.NormalTitle.GetPaddingLeft() - s.NormalTitle.GetPaddingRight()
 	title = ansi.Truncate(title, textwidth, "…")
+	prefixLen := numberPrefixLen(title)
 
 	isSelected := index == m.Index()
 	emptyFilter := m.FilterState() == list.Filtering && m.FilterValue() == ""
@@ -76,21 +158,13 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 
 	switch {
 	case emptyFilter:
+		// Whole row dimmed (empty filter input); skip the number accent so the
+		// row reads as inactive.
 		title = s.DimmedTitle.Render(title)
 	case isSelected:
-		if isFiltered {
-			unmatched := s.SelectedTitle.Inline(true)
-			matched := unmatched.Inherit(s.FilterMatch)
-			title = lipgloss.StyleRunes(title, m.MatchesForItem(index), matched, unmatched)
-		}
-		title = s.SelectedTitle.Render(title)
+		title = renderTitle(title, prefixLen, m.MatchesForItem(index), isFiltered, s.SelectedTitle, s.FilterMatch, d.number)
 	default:
-		if isFiltered {
-			unmatched := s.NormalTitle.Inline(true)
-			matched := unmatched.Inherit(s.FilterMatch)
-			title = lipgloss.StyleRunes(title, m.MatchesForItem(index), matched, unmatched)
-		}
-		title = s.NormalTitle.Render(title)
+		title = renderTitle(title, prefixLen, m.MatchesForItem(index), isFiltered, s.NormalTitle, s.FilterMatch, d.number)
 	}
 	fmt.Fprint(w, title)
 }
