@@ -13,8 +13,8 @@ func TestSearchBarLeft(t *testing.T) {
 		typing bool
 		want   string
 	}{
-		{"", true, "/"},          // live, editable input: bare slash
-		{"", false, ""},          // applied with no query: nothing
+		{"", true, "/"},         // live, editable input: bare slash
+		{"", false, ""},         // applied with no query: nothing
 		{"beta", true, "/beta"}, // typing a query
 		{"beta", false, "/beta"},
 	}
