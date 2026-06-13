@@ -207,6 +207,18 @@ type model struct {
 	detailDiff        string
 	detailDiffLoading bool
 
+	// Parsed view of the current PR diff and its presentation toggles. The diff
+	// text (detailDiff) is parsed once per delivery into detailFiles; the diff
+	// sub-view then renders from that structure. detailSplitView selects the
+	// side-by-side (split) layout over unified; detailShowOverview overlays the
+	// changed-files overview pane; detailActiveFile is the file that file
+	// navigation ([ / ]) last jumped to (also highlighted in the overview).
+	detailFiles        []fileDiff
+	detailFileOffsets  []int
+	detailSplitView    bool
+	detailShowOverview bool
+	detailActiveFile   int
+
 	// In-detail search (editor-style find within the open detail body).
 	// detailSearching is true while the user is typing/navigating a query;
 	// detailQuery is the live query; detailMatches are all occurrences in the
@@ -431,6 +443,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailOpen = false
 				m.detailItem = nil
 				m.detailShowDiff = false
+				m.detailSplitView = false
+				m.detailShowOverview = false
 				// Clear any in-flight detail/diff loading so the status-bar
 				// indicator doesn't stick: once the item is nil the bodyMsg/diffMsg
 				// handlers' cacheKey guard no longer matches and would never reset
@@ -453,6 +467,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// which have no diff. Lazy-fetch the diff on first toggle.
 				if m.detailItem != nil && m.detailItem.type_ == "pr" {
 					return m.toggleDiff()
+				}
+				return m, nil
+			case "s":
+				// Toggle the side-by-side (split) layout. Only meaningful in the
+				// diff sub-view; narrow terminals fall back to unified at render.
+				if m.detailShowDiff {
+					m.detailSplitView = !m.detailSplitView
+					m.detailViewport.GotoTop()
+					m.detailActiveFile = 0
+					m.refreshDiffView()
+				}
+				return m, nil
+			case "f":
+				// Toggle the changed-files overview pane over the diff.
+				if m.detailShowDiff {
+					m.detailShowOverview = !m.detailShowOverview
+					m.detailViewport.GotoTop()
+					m.refreshDiffView()
+				}
+				return m, nil
+			case "]":
+				// Jump to the next changed file's header.
+				if m.detailShowDiff && !m.detailShowOverview {
+					m.jumpToFile(m.detailActiveFile + 1)
+				}
+				return m, nil
+			case "[":
+				// Jump to the previous changed file's header.
+				if m.detailShowDiff && !m.detailShowOverview {
+					m.jumpToFile(m.detailActiveFile - 1)
 				}
 				return m, nil
 			case "r":
@@ -509,6 +553,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailOpen = true
 				m.detailItem = it
 				m.detailShowDiff = false
+				m.detailSplitView = false
+				m.detailShowOverview = false
 				m.detailBody = m.cachedBody(it)
 				m.detailLoading = m.detailBody == ""
 				m.openDetailViewport()
@@ -580,6 +626,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailDiffLoading = false
 				if m.detailShowDiff {
 					m.detailDiff = fmt.Sprintf("Error loading diff: %v", msg.err)
+					m.detailFiles = nil
+					m.detailFileOffsets = nil
 					m.detailViewport.SetContent(m.detailContent())
 				}
 			}
@@ -587,15 +635,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.diffCache[msg.key] = msg.diff
 		if m.detailOpen && m.detailItem != nil && cacheKey(m.detailItem) == msg.key {
-			m.detailDiff = msg.diff
+			m.setDetailDiff(msg.diff)
 			m.detailDiffLoading = false
 			if m.detailShowDiff {
 				// Preserve scroll position so an auto/manual refresh of an already
 				// open diff doesn't yank the viewport back to the top. On the first
 				// toggle the offset is already 0, so this still opens at the top.
-				offset := m.detailViewport.YOffset
-				m.detailViewport.SetContent(m.detailContent())
-				m.detailViewport.SetYOffset(offset)
+				m.refreshDiffView()
 			}
 		}
 
@@ -812,14 +858,101 @@ func (m model) detailContent() string {
 	return m.detailBodyContent()
 }
 
-// detailDiffContent returns the PR diff (or a loading placeholder) with added/
-// removed lines colored, wrapped to the viewport width.
+// detailDiffContent returns the PR diff sub-view content. While loading it is a
+// placeholder; on a fetch error the stored error text. When the changed-files
+// overview is toggled on it shows that pane. Otherwise it renders the parsed
+// diff in the active layout (unified or side-by-side). The file-header line
+// offsets used by file navigation are produced as a side effect by the renderer
+// and are not recomputed here — see refreshDiffView.
 func (m model) detailDiffContent() string {
+	w, _ := detailViewportSize(m.width, m.height, detailHeaderHeight)
 	if m.detailDiffLoading {
-		w, _ := detailViewportSize(m.width, m.height, detailHeaderHeight)
 		return lipgloss.NewStyle().Width(w).Render("Loading diff...")
 	}
-	return colorizeDiff(m.detailDiff)
+	if strings.HasPrefix(m.detailDiff, "Error loading diff") {
+		return lipgloss.NewStyle().Width(w).Render(m.detailDiff)
+	}
+	if m.detailShowOverview {
+		return renderFileOverview(m.detailFiles, m.detailActiveFile, w)
+	}
+	if len(m.detailFiles) == 0 {
+		// No parsed structure (empty diff or unrecognized format); fall back to
+		// the plain colorized text so nothing is silently dropped.
+		return colorizeDiff(m.detailDiff)
+	}
+	var content string
+	if m.detailSplitView {
+		content, _ = renderSideBySide(m.detailFiles, w)
+	} else {
+		content, _ = renderUnified(m.detailFiles, w)
+	}
+	return content
+}
+
+// diffFileOffsets returns the file-header line offsets for the current diff
+// layout, recomputed against the current viewport width. Used by file
+// navigation to scroll the viewport to a file's header. Returns nil when not in
+// a structured diff view (loading, error, overview, or unparsed).
+func (m model) diffFileOffsets() []int {
+	if m.detailDiffLoading || m.detailShowOverview || len(m.detailFiles) == 0 {
+		return nil
+	}
+	if strings.HasPrefix(m.detailDiff, "Error loading diff") {
+		return nil
+	}
+	w, _ := detailViewportSize(m.width, m.height, detailHeaderHeight)
+	var offsets []int
+	if m.detailSplitView {
+		_, offsets = renderSideBySide(m.detailFiles, w)
+	} else {
+		_, offsets = renderUnified(m.detailFiles, w)
+	}
+	return offsets
+}
+
+// setDetailDiff stores a freshly delivered diff and parses it into per-file
+// structure for the diff sub-view, resetting the active-file cursor to the
+// first file.
+func (m *model) setDetailDiff(diff string) {
+	m.detailDiff = diff
+	m.detailFiles = parseDiff(diff)
+	m.detailActiveFile = 0
+}
+
+// refreshDiffView re-renders the diff sub-view content into the viewport and
+// recomputes the file-header offsets for the current layout/width. Scroll
+// position is preserved.
+func (m *model) refreshDiffView() {
+	offset := m.detailViewport.YOffset
+	m.detailFileOffsets = m.diffFileOffsets()
+	m.detailViewport.SetContent(m.detailContent())
+	m.detailViewport.SetYOffset(offset)
+}
+
+// jumpToFile scrolls the diff viewport so the file at index i's header is at the
+// top, clamping i into range and updating the active-file cursor (so the
+// overview highlight follows). A no-op when there are no file offsets.
+func (m *model) jumpToFile(i int) {
+	n := len(m.detailFileOffsets)
+	if n == 0 {
+		return
+	}
+	if i < 0 {
+		i = 0
+	}
+	if i >= n {
+		i = n - 1
+	}
+	m.detailActiveFile = i
+	maxOffset := m.detailViewport.TotalLineCount() - m.detailViewport.Height
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	off := m.detailFileOffsets[i]
+	if off > maxOffset {
+		off = maxOffset
+	}
+	m.detailViewport.SetYOffset(off)
 }
 
 // openDetailViewport sizes the detail viewport, loads the current body, and
@@ -843,6 +976,11 @@ func (m *model) resizeDetailViewport() {
 	// Re-wrapping at the new width moves match line/column offsets, so recompute
 	// them before re-rendering the highlighted content.
 	m.recomputeDetailMatches()
+	// The diff layout (and thus file-header offsets, plus the unified fallback
+	// threshold for the split view) depends on width, so recompute offsets too.
+	if m.detailShowDiff {
+		m.detailFileOffsets = m.diffFileOffsets()
+	}
 	m.detailViewport.SetContent(m.detailContent())
 }
 
@@ -1097,14 +1235,18 @@ func (m model) cmdFetchBody(it *item) tea.Cmd {
 func (m model) toggleDiff() (tea.Model, tea.Cmd) {
 	m.detailShowDiff = !m.detailShowDiff
 	if !m.detailShowDiff {
+		// Leaving the diff resets its presentation toggles so the next open
+		// starts on the unified, no-overview view.
+		m.detailShowOverview = false
 		m.detailViewport.SetContent(m.detailContent())
 		m.detailViewport.GotoTop()
 		return m, nil
 	}
 	// Showing the diff: use the cache if present, otherwise fetch it.
 	if cached, ok := m.diffCache[cacheKey(m.detailItem)]; ok {
-		m.detailDiff = cached
+		m.setDetailDiff(cached)
 		m.detailDiffLoading = false
+		m.detailFileOffsets = m.diffFileOffsets()
 		m.detailViewport.SetContent(m.detailContent())
 		m.detailViewport.GotoTop()
 		return m, nil
