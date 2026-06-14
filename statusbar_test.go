@@ -197,9 +197,9 @@ func TestStatusBarShowsLoadingIndicator(t *testing.T) {
 	}
 }
 
-// A manual/background refresh of already-loaded content re-shows the indicator
-// even though the body stays populated — refreshCurrentView sets m.loading so
-// the bar reflects the in-flight fetch.
+// A manual (user-triggered) refresh of already-loaded content re-shows the
+// indicator even though the body stays populated — refreshCurrentView(false)
+// sets m.loading so the bar reflects the in-flight fetch.
 func TestStatusBarShowsLoadingIndicatorOnRefresh(t *testing.T) {
 	m := newModel()
 	var tm tea.Model = m
@@ -216,6 +216,54 @@ func TestStatusBarShowsLoadingIndicatorOnRefresh(t *testing.T) {
 	}
 	if !strings.Contains(tm.(model).renderStatusBar(), loadingIndicator) {
 		t.Errorf("status bar missing loading indicator during refresh: %q", tm.(model).renderStatusBar())
+	}
+}
+
+// A background auto-refresh tick must NOT raise the user-visible loading flag
+// (so the indicator doesn't flicker every interval when the view is already
+// populated), even though it still dispatches the underlying fetch.
+func TestStatusBarSuppressesLoadingIndicatorOnTick(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: []list.Item{item{number: 1, title: "a", type_: "issue"}}})
+	if strings.Contains(tm.(model).renderStatusBar(), loadingIndicator) {
+		t.Fatal("setup: indicator should be clear after initial load")
+	}
+
+	// A tick triggers a background refresh; loading must stay false and the
+	// indicator must not reappear, but the ticker is still re-armed (cmd != nil).
+	tm, cmd := tm.Update(tickMsg{})
+	if cmd == nil {
+		t.Error("tick returned nil cmd; ticker not re-armed / fetch not dispatched")
+	}
+	if mm := tm.(model); mm.loading {
+		t.Error("background tick should not set loading=true")
+	}
+	if strings.Contains(tm.(model).renderStatusBar(), loadingIndicator) {
+		t.Errorf("status bar should stay quiet on background tick: %q", tm.(model).renderStatusBar())
+	}
+}
+
+// A background tick that refreshes an open detail body must likewise leave the
+// detail loading flag (and thus the indicator) untouched.
+func TestStatusBarSuppressesLoadingIndicatorOnDetailTick(t *testing.T) {
+	m := newModel()
+	m.loading = false
+	m.detailOpen = true
+	m.detailItem = &item{number: 5, title: "x", body: "populated", type_: "issue"}
+	m.detailBody = "populated"
+	m.width = 80
+
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(tickMsg{})
+	mm := tm.(model)
+	if mm.detailLoading {
+		t.Error("background tick should not set detailLoading=true")
+	}
+	if strings.Contains(mm.renderStatusBar(), loadingIndicator) {
+		t.Errorf("detail status bar should stay quiet on background tick: %q", mm.renderStatusBar())
 	}
 }
 
@@ -264,6 +312,17 @@ func TestStatusBarShowsLoadingIndicatorForDetail(t *testing.T) {
 	m.detailDiffLoading = false
 	if strings.Contains(m.renderStatusBar(), loadingIndicator) {
 		t.Errorf("status bar should clear loading indicator when detail loads: %q", m.renderStatusBar())
+	}
+}
+
+// The loading indicator is the bare word "loading" (with ellipsis) and carries
+// no leading glyph, so it reads as a quiet status rather than a spinner.
+func TestLoadingIndicatorHasNoGlyph(t *testing.T) {
+	if !strings.Contains(loadingIndicator, "loading") {
+		t.Errorf("loadingIndicator should contain the word 'loading': %q", loadingIndicator)
+	}
+	if strings.ContainsRune(loadingIndicator, '⟳') {
+		t.Errorf("loadingIndicator should not contain the ⟳ glyph: %q", loadingIndicator)
 	}
 }
 
