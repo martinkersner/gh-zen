@@ -321,8 +321,8 @@ func renderSideBySide(files []fileDiff, width int) (string, []int) {
 				// the shorter side with blank cells and emit one joined row per
 				// physical line. The line counter advances per emitted row so file
 				// offsets track rendered rows (see refreshDiffView).
-				left := renderColumnCell(row.left, lineDel, col)
-				right := renderColumnCell(row.right, lineAdd, col)
+				left := renderColumnCell(row.left, col)
+				right := renderColumnCell(row.right, col)
 				n := len(left)
 				if len(right) > n {
 					n = len(right)
@@ -401,7 +401,7 @@ func pairHunkLines(lines []diffLine) []sideRow {
 // context, soft-wrapped to width and right-padded so every physical row is
 // exactly width visible columns. Returns one string per physical row; a nil line
 // yields a single blank row.
-func renderColumnCell(dl *diffLine, fallbackKind diffLineKind, width int) []string {
+func renderColumnCell(dl *diffLine, width int) []string {
 	blank := strings.Repeat(" ", width)
 	if dl == nil {
 		return []string{blank}
