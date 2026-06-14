@@ -504,6 +504,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.jumpToFile(m.detailActiveFile - 1)
 				}
 				return m, nil
+			case "g":
+				// Jump to the top of the detail viewport.
+				m.detailViewport.GotoTop()
+				return m, nil
+			case "G":
+				// Jump to the bottom of the detail viewport.
+				m.detailViewport.GotoBottom()
+				return m, nil
 			case "r":
 				return m, m.refreshCurrentView()
 			}
@@ -552,6 +560,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "shift+tab", "h", "left":
 			m.activeTab = (m.activeTab - 1 + tab(len(m.tabs))) % tab(len(m.tabs))
 			m.updateListSize()
+		case "g":
+			// Jump the selection to the first item.
+			cur := m.currentList()
+			if len(cur.VisibleItems()) > 0 {
+				cur.Select(0)
+			}
+			return m, nil
+		case "G":
+			// Jump the selection to the last item.
+			cur := m.currentList()
+			if n := len(cur.VisibleItems()); n > 0 {
+				cur.Select(n - 1)
+			}
+			return m, nil
 		case "enter":
 			it := m.selectedItem()
 			if it != nil {
