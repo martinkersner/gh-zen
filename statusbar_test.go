@@ -313,15 +313,20 @@ func TestStatusBarShowsLoadingIndicatorForDetail(t *testing.T) {
 		t.Errorf("status bar dropped item kind while loading: %q", m.renderStatusBar())
 	}
 
+	// A diff fetch surfaces a distinct, diff-specific label since the sub-view is
+	// no longer blanked with a placeholder while loading.
 	m.detailLoading = false
 	m.detailDiffLoading = true
-	if !strings.Contains(m.renderStatusBar(), loadingIndicator) {
-		t.Errorf("status bar missing loading indicator while detailDiffLoading: %q", m.renderStatusBar())
+	if !strings.Contains(m.renderStatusBar(), loadingDiffIndicator) {
+		t.Errorf("status bar missing diff loading indicator while detailDiffLoading: %q", m.renderStatusBar())
 	}
 
 	m.detailDiffLoading = false
 	if strings.Contains(m.renderStatusBar(), loadingIndicator) {
 		t.Errorf("status bar should clear loading indicator when detail loads: %q", m.renderStatusBar())
+	}
+	if strings.Contains(m.renderStatusBar(), loadingDiffIndicator) {
+		t.Errorf("status bar should clear diff loading indicator when detail loads: %q", m.renderStatusBar())
 	}
 }
 

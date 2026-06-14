@@ -597,8 +597,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailLoading = m.detailBody == ""
 				m.openDetailViewport()
 				if m.detailLoading {
-					return m, m.cmdFetchBody(it)
+					cmds = append(cmds, m.cmdFetchBody(it))
 				}
+				// Prefetch the PR diff in the background so the first `d` toggle
+				// usually serves from diffCache instead of blocking on a fetch. No
+				// detailDiffLoading flag is set: this is silent (like body prefetch),
+				// and the diffMsg handler caches it. If the user toggles to the diff
+				// before this lands, toggleDiff sees the cache miss, sets the loading
+				// flag itself, and the prefetch result populates the view on arrival.
+				if it.type_ == "pr" {
+					if _, ok := m.diffCache[cacheKey(it)]; !ok {
+						cmds = append(cmds, m.cmdFetchDiff(it))
+					}
+				}
+				return m, tea.Batch(cmds...)
 			}
 		}
 
@@ -897,16 +909,18 @@ func (m model) detailContent() string {
 	return m.detailBodyContent()
 }
 
-// detailDiffContent returns the PR diff sub-view content. While loading it is a
-// placeholder; on a fetch error the stored error text. When the changed-files
-// overview is toggled on it shows that pane. Otherwise it renders the parsed
-// diff in the active layout (unified or side-by-side). The file-header line
-// offsets used by file navigation are produced as a side effect by the renderer
-// and are not recomputed here — see refreshDiffView.
+// detailDiffContent returns the PR diff sub-view content. While loading the view
+// is left blank (no placeholder) — the in-flight fetch is surfaced in the status
+// bar instead (see renderStatusBar / loadingDiffIndicator). On a fetch error it
+// shows the stored error text. When the changed-files overview is toggled on it
+// shows that pane. Otherwise it renders the parsed diff in the active layout
+// (unified or side-by-side). The file-header line offsets used by file
+// navigation are produced as a side effect by the renderer and are not
+// recomputed here — see refreshDiffView.
 func (m model) detailDiffContent() string {
 	w, _ := detailViewportSize(m.width, m.height, detailHeaderHeight)
 	if m.detailDiffLoading {
-		return lipgloss.NewStyle().Width(w).Render("Loading diff...")
+		return ""
 	}
 	if m.detailDiffErr != nil {
 		return lipgloss.NewStyle().Width(w).Render(m.detailDiffErrText())
@@ -972,15 +986,17 @@ func (m model) detailDiffErrText() string {
 
 // refreshDiffView re-renders the diff sub-view content into the viewport and
 // recomputes the file-header offsets for the current layout/width in a single
-// render pass. Scroll position is preserved. For the loading/error/overview
-// cases (no structured diff) it renders the placeholder/pane and clears offsets.
+// render pass. Scroll position is preserved. While loading the view is left
+// blank (the in-flight fetch shows in the status bar, not here); for the
+// error/overview cases (no structured diff) it renders the message/pane. All of
+// these clear the file-header offsets.
 func (m *model) refreshDiffView() {
 	offset := m.detailViewport.YOffset
 	w, _ := detailViewportSize(m.width, m.height, detailHeaderHeight)
 	switch {
 	case m.detailDiffLoading:
 		m.detailFileOffsets = nil
-		m.detailViewport.SetContent(lipgloss.NewStyle().Width(w).Render("Loading diff..."))
+		m.detailViewport.SetContent("")
 	case m.detailDiffErr != nil:
 		m.detailFileOffsets = nil
 		m.detailViewport.SetContent(lipgloss.NewStyle().Width(w).Render(m.detailDiffErrText()))
@@ -1191,7 +1207,15 @@ func (m model) renderStatusBar() string {
 	// quiet on every interval. The indicator clears automatically once the
 	// loading flags are reset on completion or error.
 	if m.loading || m.detailLoading || m.detailDiffLoading {
-		indicator := loadingStyle.Render(loadingIndicator)
+		// Label a diff fetch distinctly ("loading diff…") since that is the only
+		// feedback now that the diff sub-view is not blanked with a placeholder.
+		// A generic body/list fetch in flight takes precedence over the diff label
+		// when both are set.
+		label := loadingIndicator
+		if m.detailDiffLoading && !m.loading && !m.detailLoading {
+			label = loadingDiffIndicator
+		}
+		indicator := loadingStyle.Render(label)
 		if hasLeft {
 			left = indicator + leftStyle.Render(" · ") + left
 		} else {
