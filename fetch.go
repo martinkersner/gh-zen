@@ -150,9 +150,9 @@ func colorizeDiff(diff string) string {
 	if diff == "" {
 		return ""
 	}
-	addStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#9ece6a"))
-	delStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#f7768e"))
-	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7"))
+	addStyle := lipgloss.NewStyle().Foreground(diffAddColor)
+	delStyle := lipgloss.NewStyle().Foreground(diffDelColor)
+	metaStyle := lipgloss.NewStyle().Foreground(accentColor)
 	lines := strings.Split(diff, "\n")
 	for i, ln := range lines {
 		switch {

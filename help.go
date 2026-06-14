@@ -81,9 +81,9 @@ func (m model) currentShortcuts() []shortcut {
 // shortcut valid in the current view/mode with its description. It is shown
 // centered over the screen while m.showHelp is set; `?`, esc, or ctrl+g dismisses it.
 func (m model) renderHelp() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7aa2f7"))
-	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7aa2f7"))
-	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#c0caf5"))
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accentColor)
+	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(accentColor)
+	descStyle := lipgloss.NewStyle().Foreground(textColor)
 
 	shortcuts := m.currentShortcuts()
 
@@ -105,7 +105,7 @@ func (m model) renderHelp() string {
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#565f89")).
+		BorderForeground(mutedColor).
 		Padding(0, 2).
 		Render(strings.Join(rows, "\n"))
 

@@ -12,9 +12,9 @@ func (m model) renderTabs() string {
 	for i, t := range m.tabs {
 		style := lipgloss.NewStyle().Padding(0, 1)
 		if tab(i) == m.activeTab {
-			style = style.Foreground(lipgloss.Color("#7aa2f7")).Bold(true)
+			style = style.Foreground(accentColor).Bold(true)
 		} else {
-			style = style.Foreground(lipgloss.Color("#565f89"))
+			style = style.Foreground(mutedColor)
 		}
 		label := fmt.Sprintf("%s (%s)", t, m.tabCountLabel(tab(i)))
 		tabs = append(tabs, style.Render(label))

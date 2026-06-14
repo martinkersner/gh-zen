@@ -38,7 +38,7 @@ type itemDelegate struct {
 func newItemDelegate() itemDelegate {
 	return itemDelegate{
 		styles: list.NewDefaultItemStyles(),
-		number: lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Inline(true),
+		number: lipgloss.NewStyle().Foreground(accentColor).Inline(true),
 	}
 }
 

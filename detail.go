@@ -31,8 +31,8 @@ func detailViewportSize(width, height, headerHeight int) (int, int) {
 // body: every match gets the muted highlight, the current (active) match a
 // brighter one so it stands out as ctrl+n/ctrl+p step through occurrences.
 var (
-	detailMatchStyle       = lipgloss.NewStyle().Background(lipgloss.Color("#3b4261")).Foreground(lipgloss.Color("#c0caf5"))
-	detailActiveMatchStyle = lipgloss.NewStyle().Background(lipgloss.Color("#e0af68")).Foreground(lipgloss.Color("#1a1b26")).Bold(true)
+	detailMatchStyle       = lipgloss.NewStyle().Background(matchBgColor).Foreground(textColor)
+	detailActiveMatchStyle = lipgloss.NewStyle().Background(highlightColor).Foreground(matchActiveTextColor).Bold(true)
 )
 
 // detailWrappedLines returns the detail body rendered as styled terminal
