@@ -45,13 +45,17 @@ func composeDetailBody(body string, comments []comment) string {
 	var b strings.Builder
 	b.WriteString(body)
 	b.WriteString("\n\n## Comments\n")
-	for _, c := range comments {
+	for i, c := range comments {
 		author := c.author
 		if author == "" {
 			author = "(unknown)"
 		}
-		b.WriteString("\n---\n\n")
-		b.WriteString(fmt.Sprintf("**@%s**\n\n", author))
+		// A horizontal rule separates consecutive comments; the first sits flush
+		// under the section heading (no leading rule).
+		if i > 0 {
+			b.WriteString("\n---\n")
+		}
+		b.WriteString(fmt.Sprintf("\n**@%s**\n\n", author))
 		b.WriteString(c.body)
 		b.WriteString("\n")
 	}

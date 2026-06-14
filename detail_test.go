@@ -228,6 +228,19 @@ func TestComposeDetailBodyWithComments(t *testing.T) {
 	if !strings.Contains(out, "first") || !strings.Contains(out, "second") {
 		t.Errorf("comment bodies missing:\n%s", out)
 	}
+	// Exactly one horizontal rule: between the two comments, none before the
+	// first (which sits flush under the heading).
+	if n := strings.Count(out, "\n---\n"); n != 1 {
+		t.Errorf("want 1 separator rule between 2 comments, got %d:\n%s", n, out)
+	}
+}
+
+func TestComposeDetailBodySingleCommentNoRule(t *testing.T) {
+	// A lone comment has no separator rule before it.
+	out := composeDetailBody("b", []comment{{author: "alice", body: "only"}})
+	if strings.Contains(out, "\n---\n") {
+		t.Errorf("single comment should have no separator rule:\n%s", out)
+	}
 }
 
 func TestComposeDetailBodyEmptyAuthor(t *testing.T) {

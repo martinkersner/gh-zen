@@ -58,6 +58,11 @@ type bodyMsg struct {
 	key  string
 	body string
 	err  error
+	// prefetch marks a cheap list-body prefetch (no comments) as opposed to a
+	// full fetch (body + comments). A prefetch must not overwrite a key that a
+	// full fetch already populated, or a tick-driven prefetch landing after the
+	// full fetch would drop the comments. See the bodyMsg handler.
+	prefetch bool
 }
 
 type diffMsg struct {

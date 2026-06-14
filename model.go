@@ -497,6 +497,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			break
 		}
+		// A prefetch carries only the bare list body (no comments); never let it
+		// clobber a key a full fetch already populated with body+comments (a tick
+		// can enqueue a prefetch while a full fetch is in flight).
+		if msg.prefetch {
+			if _, ok := m.bodyCache[msg.key]; ok {
+				break
+			}
+		}
 		m.bodyCache[msg.key] = msg.body
 		if m.detailOpen && m.detailItem != nil && cacheKey(m.detailItem) == msg.key {
 			// Preserve the current scroll position across a refresh so the user
@@ -604,7 +612,7 @@ func cacheKey(it *item) string {
 
 func (m model) cmdPrefetchBody(it *item) tea.Cmd {
 	return func() tea.Msg {
-		return bodyMsg{key: cacheKey(it), body: it.body}
+		return bodyMsg{key: cacheKey(it), body: it.body, prefetch: true}
 	}
 }
 
