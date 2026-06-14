@@ -39,7 +39,8 @@ var (
 )
 
 // applyPalette makes p the active palette by reassigning the package-level color
-// vars. Render functions read those globals, so this is a true live switch.
+// vars and rebuilding the pre-computed styles that captured them. Render
+// functions read those globals/styles, so this is a true live switch.
 func applyPalette(p Palette) {
 	accentColor = p.Accent
 	mutedColor = p.Muted
@@ -50,6 +51,34 @@ func applyPalette(p Palette) {
 	textColor = p.Text
 	matchBgColor = p.MatchBg
 	matchActiveTextColor = p.MatchActiveText
+	rebuildThemeStyles()
+}
+
+// rebuildThemeStyles regenerates the package-level lipgloss styles that bake in
+// color values at construction time (diff styles in diff.go, detail search
+// styles in detail.go, the list number-prefix style in row.go). These are not
+// AdaptiveColor-only — they're full styles — so a palette switch must rebuild
+// them; otherwise the diff view, detail search highlight, and list number
+// prefix would keep rendering in the palette active at program start.
+func rebuildThemeStyles() {
+	diffAddStyle = lipgloss.NewStyle().Foreground(diffAddColor)
+	diffDelStyle = lipgloss.NewStyle().Foreground(diffDelColor)
+	diffMetaStyle = lipgloss.NewStyle().Foreground(accentColor)
+	diffPathStyle = lipgloss.NewStyle().Bold(true).Foreground(diffPathColor)
+	diffMutedStyle = lipgloss.NewStyle().Foreground(mutedColor)
+	diffActiveStyle = lipgloss.NewStyle().Bold(true).Foreground(highlightColor)
+
+	detailMatchStyle = lipgloss.NewStyle().Background(matchBgColor).Foreground(textColor)
+	detailActiveMatchStyle = lipgloss.NewStyle().Background(highlightColor).Foreground(matchActiveTextColor).Bold(true)
+
+	numberStyle = lipgloss.NewStyle().Foreground(accentColor).Inline(true)
+}
+
+// init ensures the derived styles are populated for the default palette before
+// any render runs, even on code paths that don't go through applyPalette (e.g.
+// tests constructing styles directly).
+func init() {
+	rebuildThemeStyles()
 }
 
 // tokyoNight is the historical default. Dark values are the original Tokyo Night

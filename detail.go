@@ -64,10 +64,11 @@ func composeDetailBody(body string, comments []comment) string {
 
 // detailMatchStyle / detailActiveMatchStyle style search hits in the detail
 // body: every match gets the muted highlight, the current (active) match a
-// brighter one so it stands out as ctrl+n/ctrl+p step through occurrences.
+// brighter one so it stands out as ctrl+n/ctrl+p step through occurrences. They
+// are rebuilt by rebuildThemeStyles (see theme.go) on a palette change.
 var (
-	detailMatchStyle       = lipgloss.NewStyle().Background(matchBgColor).Foreground(textColor)
-	detailActiveMatchStyle = lipgloss.NewStyle().Background(highlightColor).Foreground(matchActiveTextColor).Bold(true)
+	detailMatchStyle       lipgloss.Style
+	detailActiveMatchStyle lipgloss.Style
 )
 
 // detailWrappedLines returns the detail body rendered as styled terminal

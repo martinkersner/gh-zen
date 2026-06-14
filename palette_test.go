@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // The registry must contain the four seeded palettes, in order, each with a
 // non-empty Name and every semantic role defining both Light and Dark.
@@ -99,6 +103,30 @@ func TestApplyPaletteSetsGlobals(t *testing.T) {
 	applyPalette(tokyoNight)
 	if got := activePaletteName(); got != "Tokyo Night" {
 		t.Errorf("activePaletteName() = %q, want Tokyo Night", got)
+	}
+}
+
+// applyPalette must also rebuild the pre-computed styles that bake in colors
+// (diff/detail/number styles), so a live theme switch actually changes the diff
+// view, detail search highlight, and list number prefix — not just the
+// AdaptiveColor globals.
+func TestApplyPaletteRebuildsStyles(t *testing.T) {
+	t.Cleanup(func() { applyPalette(defaultPalette) })
+
+	applyPalette(tokyoNight)
+	if diffAddStyle.GetForeground() != lipgloss.AdaptiveColor(tokyoNight.DiffAdd) {
+		t.Errorf("diffAddStyle fg = %v, want %v", diffAddStyle.GetForeground(), tokyoNight.DiffAdd)
+	}
+
+	applyPalette(dracula)
+	if diffAddStyle.GetForeground() != lipgloss.AdaptiveColor(dracula.DiffAdd) {
+		t.Errorf("diffAddStyle not rebuilt: fg = %v, want %v", diffAddStyle.GetForeground(), dracula.DiffAdd)
+	}
+	if numberStyle.GetForeground() != lipgloss.AdaptiveColor(dracula.Accent) {
+		t.Errorf("numberStyle not rebuilt: fg = %v, want %v", numberStyle.GetForeground(), dracula.Accent)
+	}
+	if detailActiveMatchStyle.GetBackground() != lipgloss.AdaptiveColor(dracula.Highlight) {
+		t.Errorf("detailActiveMatchStyle not rebuilt: bg = %v, want %v", detailActiveMatchStyle.GetBackground(), dracula.Highlight)
 	}
 }
 
