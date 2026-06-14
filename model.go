@@ -562,7 +562,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateListSize()
 		case "g":
 			// Jump the selection to the first item.
-			m.currentList().Select(0)
+			cur := m.currentList()
+			if len(cur.VisibleItems()) > 0 {
+				cur.Select(0)
+			}
 			return m, nil
 		case "G":
 			// Jump the selection to the last item.

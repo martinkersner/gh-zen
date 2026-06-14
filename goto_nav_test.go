@@ -38,6 +38,18 @@ func TestListGotoFirstLast(t *testing.T) {
 	}
 }
 
+// `g`/`G` on an empty list are safe no-ops (no panic from Select on an empty
+// list).
+func TestListGotoEmpty(t *testing.T) {
+	m := newModel()
+	m.loading = false
+
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
+}
+
 // In the detail view, `G` scrolls the viewport to the bottom and `g` back to the
 // top.
 func TestDetailGotoTopBottom(t *testing.T) {
