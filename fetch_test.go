@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -12,16 +13,26 @@ import (
 // response struct (exactly as the real client does, so it's robust to the
 // fetch layer's private response types), and can return a configured error to
 // drive the error branches.
+//
+// The recorder fields are guarded by mu so a single fake can be shared across
+// concurrent Do calls without racing. The e2e tests open detail views whose
+// cmdFetchBody runs in a background goroutine alongside the auto-refresh tick,
+// so Do can be invoked concurrently; without the mutex go test -race would flag
+// a data race on the gotQuery/gotVars writes.
 type fakeGraphQLClient struct {
 	err      error
 	respJSON string
+
+	mu       sync.Mutex
 	gotQuery string
 	gotVars  map[string]interface{}
 }
 
 func (f *fakeGraphQLClient) Do(query string, variables map[string]interface{}, response interface{}) error {
+	f.mu.Lock()
 	f.gotQuery = query
 	f.gotVars = variables
+	f.mu.Unlock()
 	if f.err != nil {
 		return f.err
 	}
@@ -31,6 +42,20 @@ func (f *fakeGraphQLClient) Do(query string, variables map[string]interface{}, r
 		}
 	}
 	return nil
+}
+
+// lastQuery and lastVars read the recorded query/variables under the mutex so
+// assertions are safe even if a concurrent Do is in flight.
+func (f *fakeGraphQLClient) lastQuery() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gotQuery
+}
+
+func (f *fakeGraphQLClient) lastVars() map[string]interface{} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gotVars
 }
 
 // withFakeGitHub swaps the injection seams (newGraphQLClient/currentRepo) for
@@ -103,23 +128,25 @@ func TestFetchBodyIssueSuccess(t *testing.T) {
 		t.Errorf("comment[1] = %+v", comments[1])
 	}
 	// Verify the issue field (not pullRequest) was queried and variables wired.
-	if got := fake.gotVars["number"]; got != 42 {
+	gotVars := fake.lastVars()
+	gotQuery := fake.lastQuery()
+	if got := gotVars["number"]; got != 42 {
 		t.Errorf("number var = %v, want 42", got)
 	}
-	if got := fake.gotVars["comments"]; got != commentsFetchLimit {
+	if got := gotVars["comments"]; got != commentsFetchLimit {
 		t.Errorf("comments var = %v, want %d", got, commentsFetchLimit)
 	}
-	if !strings.Contains(fake.gotQuery, "comments(first: $comments)") {
-		t.Errorf("query did not request comments:\n%s", fake.gotQuery)
+	if !strings.Contains(gotQuery, "comments(first: $comments)") {
+		t.Errorf("query did not request comments:\n%s", gotQuery)
 	}
-	if got := fake.gotVars["owner"]; got != testRepoOwner {
+	if got := gotVars["owner"]; got != testRepoOwner {
 		t.Errorf("owner var = %v, want %q", got, testRepoOwner)
 	}
-	if got := fake.gotVars["repo"]; got != testRepoName {
+	if got := gotVars["repo"]; got != testRepoName {
 		t.Errorf("repo var = %v, want %q", got, testRepoName)
 	}
-	if !strings.Contains(fake.gotQuery, "issue(number: $number)") {
-		t.Errorf("query did not target the issue field:\n%s", fake.gotQuery)
+	if !strings.Contains(gotQuery, "issue(number: $number)") {
+		t.Errorf("query did not target the issue field:\n%s", gotQuery)
 	}
 }
 
@@ -149,8 +176,8 @@ func TestFetchBodyPRSuccess(t *testing.T) {
 	if total != 60 {
 		t.Errorf("totalCount = %d, want 60", total)
 	}
-	if !strings.Contains(fake.gotQuery, "pullRequest(number: $number)") {
-		t.Errorf("query did not target the pullRequest field:\n%s", fake.gotQuery)
+	if q := fake.lastQuery(); !strings.Contains(q, "pullRequest(number: $number)") {
+		t.Errorf("query did not target the pullRequest field:\n%s", q)
 	}
 }
 
@@ -212,10 +239,11 @@ func TestFetchIssuesAndPRsSuccess(t *testing.T) {
 	if gotPR.number != 21 || gotPR.title != "pr one" || gotPR.body != "pbody" || gotPR.type_ != "pr" {
 		t.Errorf("pr item = %+v", gotPR)
 	}
-	if got := fake.gotVars["owner"]; got != testRepoOwner {
+	gotVars := fake.lastVars()
+	if got := gotVars["owner"]; got != testRepoOwner {
 		t.Errorf("owner var = %v, want %q", got, testRepoOwner)
 	}
-	if got := fake.gotVars["repo"]; got != testRepoName {
+	if got := gotVars["repo"]; got != testRepoName {
 		t.Errorf("repo var = %v, want %q", got, testRepoName)
 	}
 }
