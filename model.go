@@ -1178,6 +1178,7 @@ func (m model) renderStatusBar() string {
 		}
 	}
 
+	hasLeft := left != ""
 	left = leftStyle.Render(left)
 
 	// While a user-visible fetch is in flight (initial load, manual refresh, or a
@@ -1190,10 +1191,10 @@ func (m model) renderStatusBar() string {
 	// (dim) and prepended so it never inherits the bold blue left text style.
 	if m.loading || m.detailLoading || m.detailDiffLoading {
 		indicator := loadingStyle.Render(loadingIndicator)
-		if left == "" {
-			left = indicator
-		} else {
+		if hasLeft {
 			left = indicator + leftStyle.Render(" · ") + left
+		} else {
+			left = indicator
 		}
 	}
 
