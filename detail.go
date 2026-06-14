@@ -38,7 +38,13 @@ func detailViewportSize(width, height, headerHeight int) (int, int) {
 //
 // With no comments it returns the body verbatim so the empty-state and
 // "Loading body..." handling in detailWrappedLines stay exactly as before.
-func composeDetailBody(body string, comments []comment) string {
+//
+// totalCount is the thread's true comment count from GitHub (the connection's
+// totalCount). When it exceeds the number of rendered comments — i.e. the fetch
+// limit truncated the thread — a "_(showing N of M comments)_" line is appended
+// so the user knows more discussion exists. With totalCount <= len(comments)
+// (the common case) the output is identical to before.
+func composeDetailBody(body string, comments []comment, totalCount int) string {
 	if len(comments) == 0 {
 		return body
 	}
@@ -58,6 +64,9 @@ func composeDetailBody(body string, comments []comment) string {
 		b.WriteString(fmt.Sprintf("\n**@%s**\n\n", author))
 		b.WriteString(c.body)
 		b.WriteString("\n")
+	}
+	if totalCount > len(comments) {
+		b.WriteString(fmt.Sprintf("\n_(showing %d of %d comments)_\n", len(comments), totalCount))
 	}
 	return b.String()
 }

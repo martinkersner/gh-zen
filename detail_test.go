@@ -199,7 +199,7 @@ func TestDetailHeaderLeftMargin(t *testing.T) {
 func TestComposeDetailBodyNoComments(t *testing.T) {
 	// With no comments the body must be returned verbatim so the empty-state and
 	// loading handling in detailWrappedLines stay unchanged.
-	if got := composeDetailBody("just the body", nil); got != "just the body" {
+	if got := composeDetailBody("just the body", nil, 0); got != "just the body" {
 		t.Errorf("composeDetailBody(no comments) = %q, want verbatim body", got)
 	}
 }
@@ -208,7 +208,7 @@ func TestComposeDetailBodyWithComments(t *testing.T) {
 	out := composeDetailBody("the body", []comment{
 		{author: "alice", body: "first"},
 		{author: "bob", body: "second"},
-	})
+	}, 2)
 	// Body preserved at the top, comments appended under a Comments section in
 	// order, each with a bold @author attribution.
 	if !strings.HasPrefix(out, "the body") {
@@ -237,15 +237,41 @@ func TestComposeDetailBodyWithComments(t *testing.T) {
 
 func TestComposeDetailBodySingleCommentNoRule(t *testing.T) {
 	// A lone comment has no separator rule before it.
-	out := composeDetailBody("b", []comment{{author: "alice", body: "only"}})
+	out := composeDetailBody("b", []comment{{author: "alice", body: "only"}}, 1)
 	if strings.Contains(out, "\n---\n") {
 		t.Errorf("single comment should have no separator rule:\n%s", out)
 	}
 }
 
 func TestComposeDetailBodyEmptyAuthor(t *testing.T) {
-	out := composeDetailBody("b", []comment{{author: "", body: "ghost"}})
+	out := composeDetailBody("b", []comment{{author: "", body: "ghost"}}, 1)
 	if !strings.Contains(out, "**@(unknown)**") {
 		t.Errorf("empty author not labeled as unknown:\n%s", out)
+	}
+}
+
+func TestComposeDetailBodyTruncated(t *testing.T) {
+	// When the thread's total exceeds the rendered comments, a truncation
+	// indicator naming both counts is appended so the user knows more exist.
+	out := composeDetailBody("b", []comment{
+		{author: "alice", body: "one"},
+		{author: "bob", body: "two"},
+	}, 51)
+	if !strings.Contains(out, "_(showing 2 of 51 comments)_") {
+		t.Errorf("missing truncation indicator:\n%s", out)
+	}
+}
+
+func TestComposeDetailBodyNotTruncated(t *testing.T) {
+	// totalCount equal to the rendered count (and the typical totalCount==0 from
+	// callers that don't supply it) must not add a truncation indicator — output
+	// is identical to the non-truncated rendering.
+	withTotal := composeDetailBody("b", []comment{{author: "alice", body: "one"}}, 1)
+	zeroTotal := composeDetailBody("b", []comment{{author: "alice", body: "one"}}, 0)
+	if strings.Contains(withTotal, "showing") {
+		t.Errorf("unexpected truncation indicator when total==len:\n%s", withTotal)
+	}
+	if withTotal != zeroTotal {
+		t.Errorf("totalCount==0 should render identically to total==len:\n%q\n%q", zeroTotal, withTotal)
 	}
 }

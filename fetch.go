@@ -92,14 +92,18 @@ type comment struct {
 // Kept separate from the list fetch so the detail diff (fetchDiff) can grow
 // independently. For PRs this is the issue-comment thread; review comments live
 // under a separate connection and are out of scope here.
-func fetchBody(number int, isPR bool) (string, []comment, error) {
+//
+// The returned int is the thread's total comment count (the connection's
+// totalCount), which can exceed the number of comments returned when the thread
+// is longer than commentsFetchLimit; callers use it to surface truncation.
+func fetchBody(number int, isPR bool) (string, []comment, int, error) {
 	client, err := newGraphQLClient()
 	if err != nil {
-		return "", nil, err
+		return "", nil, 0, err
 	}
 	repo, err := currentRepo()
 	if err != nil {
-		return "", nil, err
+		return "", nil, 0, err
 	}
 
 	field := "issue"
@@ -112,6 +116,7 @@ func fetchBody(number int, isPR bool) (string, []comment, error) {
 				%s(number: $number) {
 					body
 					comments(first: $comments) {
+						totalCount
 						nodes {
 							author { login }
 							body
@@ -137,7 +142,8 @@ func fetchBody(number int, isPR bool) (string, []comment, error) {
 	type detail struct {
 		Body     string `json:"body"`
 		Comments struct {
-			Nodes []commentNode `json:"nodes"`
+			TotalCount int           `json:"totalCount"`
+			Nodes      []commentNode `json:"nodes"`
 		} `json:"comments"`
 	}
 	type response struct {
@@ -148,7 +154,7 @@ func fetchBody(number int, isPR bool) (string, []comment, error) {
 	}
 	var resp response
 	if err := client.Do(query, variables, &resp); err != nil {
-		return "", nil, err
+		return "", nil, 0, err
 	}
 	d := resp.Repository.Issue
 	if isPR {
@@ -158,7 +164,7 @@ func fetchBody(number int, isPR bool) (string, []comment, error) {
 	for _, n := range d.Comments.Nodes {
 		comments = append(comments, comment{author: n.Author.Login, body: n.Body})
 	}
-	return d.Body, comments, nil
+	return d.Body, comments, d.Comments.TotalCount, nil
 }
 
 // ghDiff shells out to `gh pr diff <number>` and returns its stdout. It is a
