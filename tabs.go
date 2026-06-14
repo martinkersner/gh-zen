@@ -1,0 +1,46 @@
+package main
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/charmbracelet/lipgloss"
+)
+
+func (m model) renderTabs() string {
+	var tabs []string
+	for i, t := range m.tabs {
+		style := lipgloss.NewStyle().Padding(0, 1)
+		if tab(i) == m.activeTab {
+			style = style.Foreground(lipgloss.Color("#7aa2f7")).Bold(true)
+		} else {
+			style = style.Foreground(lipgloss.Color("#565f89"))
+		}
+		label := fmt.Sprintf("%s (%s)", t, m.tabCountLabel(tab(i)))
+		tabs = append(tabs, style.Render(label))
+	}
+	// Extra left pad of 1 so the first tab's text starts at column 2, aligning
+	// with the list items below (NormalTitle padding-left is 2; the tab style's
+	// own padding-left is only 1).
+	return lipgloss.NewStyle().PaddingLeft(1).Render(lipgloss.JoinHorizontal(lipgloss.Left, tabs...))
+}
+
+// tabCount returns the number of items fetched for the given tab.
+func (m model) tabCount(t tab) int {
+	switch t {
+	case tabPRs:
+		return len(m.prList.Items())
+	default:
+		return len(m.issueList.Items())
+	}
+}
+
+// tabCountLabel renders the bracket contents for a tab: "?" while the initial
+// fetch is still in flight (the count is unknown, not zero), otherwise the real
+// count — including "0" once a fetch genuinely returns no items.
+func (m model) tabCountLabel(t tab) string {
+	if m.loading {
+		return "?"
+	}
+	return strconv.Itoa(m.tabCount(t))
+}
