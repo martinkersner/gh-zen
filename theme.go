@@ -1,6 +1,10 @@
 package main
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"sync"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Palette is a complete set of semantic-role colors for the TUI. Each role is an
 // AdaptiveColor holding a Light and Dark value resolved at render time against
@@ -20,12 +24,31 @@ type Palette struct {
 	MatchActiveText lipgloss.AdaptiveColor // active search match text on the highlight background.
 }
 
+// paletteMu guards the package-level palette color vars and the derived styles
+// (diffAddStyle … numberStyle) below. applyPalette mutates them from Update
+// (palette-picker cursor move / enter / esc); the same globals/styles are read
+// on the render path. bubbletea serializes Update→View on its event loop and
+// glamour renders synchronously, so the two have not been observed to contend —
+// but under the Go memory model an unsynchronized read/write across goroutines
+// is a data race (markdown.go already notes View may run off the Update
+// goroutine). The write path (applyPalette → rebuildThemeStyles) takes the write
+// lock; the read path takes the read lock once at the View boundary, which is
+// the only render entry point that can run concurrently with a palette switch.
+// Every other reader (refreshDiffView, colorizeDiff, etc.) is reached either
+// from Update — the same goroutine as applyPalette — or transitively from View
+// under that same RLock, so none of them re-lock (a nested RLock could deadlock
+// against a waiting writer). RLock is held across the whole render rather than
+// snapshotting each global: the reads are scattered across many call sites,
+// holding the read lock is cheap, and writes only originate from the event loop
+// so an RLock-held render never actually blocks a writer in practice. Issue #115.
+var paletteMu sync.RWMutex
+
 // Package-level active colors. These are referenced directly across the render
 // code (detail.go, fetch.go, diff.go, help.go, statusbar.go, row.go, view.go,
 // tabs.go). applyPalette reassigns them so a theme switch happens in one place
-// without re-plumbing every call site. The initial values are the Tokyo Night
-// palette (the historical default), preserved exactly so the default dark
-// appearance does not drift.
+// without re-plumbing every call site. Reads/writes are guarded by paletteMu
+// (see above). The initial values are the Tokyo Night palette (the historical
+// default), preserved exactly so the default dark appearance does not drift.
 var (
 	accentColor          = tokyoNight.Accent
 	mutedColor           = tokyoNight.Muted
@@ -42,6 +65,8 @@ var (
 // vars and rebuilding the pre-computed styles that captured them. Render
 // functions read those globals/styles, so this is a true live switch.
 func applyPalette(p Palette) {
+	paletteMu.Lock()
+	defer paletteMu.Unlock()
 	accentColor = p.Accent
 	mutedColor = p.Muted
 	diffAddColor = p.DiffAdd
@@ -60,6 +85,9 @@ func applyPalette(p Palette) {
 // AdaptiveColor-only — they're full styles — so a palette switch must rebuild
 // them; otherwise the diff view, detail search highlight, and list number
 // prefix would keep rendering in the palette active at program start.
+//
+// Callers must hold paletteMu for writing (applyPalette does); the sole
+// exception is init, which runs before any goroutine could read the styles.
 func rebuildThemeStyles() {
 	diffAddStyle = lipgloss.NewStyle().Foreground(diffAddColor)
 	diffDelStyle = lipgloss.NewStyle().Foreground(diffDelColor)
@@ -187,6 +215,8 @@ func paletteIndex(name string) int {
 // none match (e.g. the globals were set outside the registry). Used to seed the
 // settings cursor on the live palette.
 func activePaletteName() string {
+	paletteMu.RLock()
+	defer paletteMu.RUnlock()
 	for _, p := range palettes {
 		if p.Accent == accentColor && p.Text == textColor && p.DiffAdd == diffAddColor {
 			return p.Name

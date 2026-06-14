@@ -7,6 +7,16 @@ import (
 )
 
 func (m model) View() string {
+	// The whole render reads the palette globals/derived styles (theme.go),
+	// which applyPalette mutates from Update. Hold the read lock for the entire
+	// render so a concurrent palette switch can't tear a color value mid-frame
+	// (see paletteMu, issue #115). The reads are scattered across the render
+	// tree, so locking at this single boundary is simpler and less error-prone
+	// than locking each call site, and the lock is released as soon as the frame
+	// string is built.
+	paletteMu.RLock()
+	defer paletteMu.RUnlock()
+
 	if m.width == 0 {
 		return ""
 	}
