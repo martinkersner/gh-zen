@@ -152,3 +152,46 @@ func TestDetailShortBody(t *testing.T) {
 		t.Errorf("short body not rendered")
 	}
 }
+
+// The detail title must be indented to column 2 so it aligns with list items
+// (NormalTitle PaddingLeft(2)) and the rest of the app, and the indented block
+// must still fit the terminal width without overflow even when the title wraps.
+func TestDetailHeaderLeftMargin(t *testing.T) {
+	m := newModel()
+	items := []list.Item{
+		item{number: 99, title: "aligned title", body: "body", type_: "issue"},
+	}
+	m.issueList.SetItems(items)
+	m.loading = false
+
+	const w, h = 80, 24
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm := tm.(model)
+
+	firstLine := strings.SplitN(mm.detailHeader(), "\n", 2)[0]
+	if !strings.HasPrefix(firstLine, "  #99") {
+		t.Errorf("detail header not indented to column 2: %q", firstLine)
+	}
+
+	// A long title that wraps must keep the indented block within the terminal
+	// width (padding is subtracted from Width, not added on top).
+	m2 := newModel()
+	m2.issueList.SetItems([]list.Item{
+		item{number: 100, title: strings.Repeat("very long title word ", 10), body: "b", type_: "issue"},
+	})
+	m2.loading = false
+	var tm2 tea.Model = m2
+	tm2, _ = tm2.Update(tea.WindowSizeMsg{Width: 30, Height: 24})
+	tm2, _ = tm2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	hdr := tm2.(model).detailHeader()
+	if gotW := lipgloss.Width(hdr); gotW > 30 {
+		t.Errorf("wrapped indented header width %d exceeds terminal width 30", gotW)
+	}
+	for _, line := range strings.Split(hdr, "\n") {
+		if !strings.HasPrefix(line, "  ") {
+			t.Errorf("wrapped header line not indented to column 2: %q", line)
+		}
+	}
+}
