@@ -57,6 +57,7 @@ func (m model) currentShortcuts() []shortcut {
 			}
 		}
 		s = append(s,
+			shortcut{"g/G", "top/bottom"},
 			shortcut{"/", "search"},
 			shortcut{"r", "refresh"},
 			shortcut{"?", "toggle help"},
@@ -67,6 +68,7 @@ func (m model) currentShortcuts() []shortcut {
 	return []shortcut{
 		{"q/esc/ctrl+g", "quit"},
 		{"tab", "switch tab"},
+		{"g/G", "first/last"},
 		{"/", "filter"},
 		{"enter", "open"},
 		{"r", "refresh"},
