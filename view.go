@@ -63,10 +63,14 @@ func (m model) detailHeader() string {
 	}
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#7aa2f7"))
+		Foreground(lipgloss.Color("#7aa2f7")).
+		// Indent to column 2 so the title lines up with list items
+		// (NormalTitle PaddingLeft(2)) and the rest of the app.
+		PaddingLeft(2)
 	// Constrain to the terminal width so a long title wraps deterministically;
 	// skip the constraint before the first resize (width 0) to avoid clamping to
-	// zero columns.
+	// zero columns. lipgloss subtracts PaddingLeft from this Width, so the
+	// rendered block (padding + content) still fits the terminal exactly.
 	if m.width > 0 {
 		titleStyle = titleStyle.Width(m.width)
 	}
