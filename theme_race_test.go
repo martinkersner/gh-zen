@@ -18,8 +18,8 @@ import (
 // Without the -race flag this test still verifies the lock doesn't deadlock and
 // that View keeps producing output while palettes are switched underneath it.
 func TestPaletteConcurrentSwitchAndRender(t *testing.T) {
-	// Build a sized model in each render mode so View's read path actually
-	// touches the palette globals (list tabs, detail header, diff styles).
+	// Build a sized model with items loaded so View's list render path actually
+	// touches the palette globals (tab accent/muted, status bar, number prefix).
 	var base tea.Model = newModel()
 	base, _ = base.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	base, _ = base.Update(dataMsg{
@@ -27,6 +27,14 @@ func TestPaletteConcurrentSwitchAndRender(t *testing.T) {
 		prs:    []list.Item{item{number: 2, title: "beta", type_: "pr"}},
 	})
 	m := base.(model)
+
+	// A second, immutable snapshot opened into the detail view so the detail
+	// render path (detailHeader's accent, the search-match styles) is exercised
+	// too. Entering detail before the goroutines start keeps each model a stable
+	// value the readers only read, never mutate.
+	var detailBase tea.Model = m
+	detailBase, _ = detailBase.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm := detailBase.(model)
 
 	// Restore the default palette when done so concurrent palette switching
 	// doesn't leak into other tests.
@@ -44,13 +52,15 @@ func TestPaletteConcurrentSwitchAndRender(t *testing.T) {
 		}
 	}()
 
-	// Readers: render concurrently while the palette is being switched.
-	for r := 0; r < 2; r++ {
+	// Readers: render the list view and the detail view concurrently while the
+	// palette is being switched, so both render paths read the globals.
+	for _, rm := range []model{m, dm} {
+		rm := rm
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for i := 0; i < iterations; i++ {
-				_ = m.View()
+				_ = rm.View()
 			}
 		}()
 	}
