@@ -173,12 +173,12 @@ func pathFromMarker(ln string) string {
 // diff render styles, shared by the unified, side-by-side, and overview
 // renderers so all three read consistently with the rest of the TUI.
 var (
-	diffAddStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#9ece6a"))
-	diffDelStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#f7768e"))
-	diffMetaStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7"))
-	diffPathStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#bb9af7"))
-	diffMutedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
-	diffActiveStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#e0af68"))
+	diffAddStyle    = lipgloss.NewStyle().Foreground(diffAddColor)
+	diffDelStyle    = lipgloss.NewStyle().Foreground(diffDelColor)
+	diffMetaStyle   = lipgloss.NewStyle().Foreground(accentColor)
+	diffPathStyle   = lipgloss.NewStyle().Bold(true).Foreground(diffPathColor)
+	diffMutedStyle  = lipgloss.NewStyle().Foreground(mutedColor)
+	diffActiveStyle = lipgloss.NewStyle().Bold(true).Foreground(highlightColor)
 )
 
 // fileHeaderLine renders the one-line per-file header used at the top of each

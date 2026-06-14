@@ -16,10 +16,10 @@ import (
 // shows context-aware key hints. It is rendered in both the list and detail
 // views.
 func (m model) renderStatusBar() string {
-	// Every status-bar element shares one uniform color (#565f89, the dim gray
+	// Every status-bar element shares one uniform color (the muted dim gray
 	// formerly used only for the `? help` hint) so the bar reads as a single
 	// quiet line rather than a mix of bold blue + dim gray.
-	barStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
+	barStyle := lipgloss.NewStyle().Foreground(mutedColor)
 	leftStyle := barStyle
 	hintStyle := barStyle
 	loadingStyle := barStyle

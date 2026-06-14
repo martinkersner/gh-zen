@@ -19,9 +19,10 @@ var (
 )
 
 // markdownRenderer returns a glamour renderer that word-wraps at width and uses
-// the "dark" style to match the codebase's fixed Tokyo Night dark palette (see
-// the lipgloss.Color usages in model.go; there is no light-mode branch). A nil
-// renderer (construction failure) is treated as "no markdown" by the caller.
+// the "dark" style to match the codebase's Tokyo Night dark palette (see
+// theme.go). The semantic palette has a light variant, but glamour's markdown
+// styling is still pinned to dark here. A nil renderer (construction failure) is
+// treated as "no markdown" by the caller.
 func markdownRenderer(width int) *glamour.TermRenderer {
 	if width < 1 {
 		width = 1

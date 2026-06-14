@@ -63,7 +63,7 @@ func (m model) detailHeader() string {
 	}
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#7aa2f7")).
+		Foreground(accentColor).
 		// Indent to column 2 so the title lines up with list items
 		// (NormalTitle PaddingLeft(2)) and the rest of the app.
 		PaddingLeft(2)
