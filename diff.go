@@ -171,14 +171,16 @@ func pathFromMarker(ln string) string {
 }
 
 // diff render styles, shared by the unified, side-by-side, and overview
-// renderers so all three read consistently with the rest of the TUI.
+// renderers so all three read consistently with the rest of the TUI. They are
+// rebuilt by rebuildThemeStyles (see theme.go) whenever the active palette
+// changes, so a live theme switch is reflected in the diff view too.
 var (
-	diffAddStyle    = lipgloss.NewStyle().Foreground(diffAddColor)
-	diffDelStyle    = lipgloss.NewStyle().Foreground(diffDelColor)
-	diffMetaStyle   = lipgloss.NewStyle().Foreground(accentColor)
-	diffPathStyle   = lipgloss.NewStyle().Bold(true).Foreground(diffPathColor)
-	diffMutedStyle  = lipgloss.NewStyle().Foreground(mutedColor)
-	diffActiveStyle = lipgloss.NewStyle().Bold(true).Foreground(highlightColor)
+	diffAddStyle    lipgloss.Style
+	diffDelStyle    lipgloss.Style
+	diffMetaStyle   lipgloss.Style
+	diffPathStyle   lipgloss.Style
+	diffMutedStyle  lipgloss.Style
+	diffActiveStyle lipgloss.Style
 )
 
 // fileHeaderLine renders the one-line per-file header used at the top of each

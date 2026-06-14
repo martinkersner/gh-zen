@@ -25,20 +25,22 @@ func (i item) FilterValue() string { return fmt.Sprintf("#%d %s", i.number, i.ti
 func (i item) Title() string       { return fmt.Sprintf("#%d %s", i.number, i.title) }
 func (i item) Description() string { return "" }
 
+// numberStyle is the distinct color applied to the "#<number>" prefix so it
+// stands out from the title text. It is a package global (read live by Render)
+// so rebuildThemeStyles can refresh it on a palette change; otherwise a theme
+// switch would leave the list prefix in the original accent color.
+var numberStyle lipgloss.Style
+
 // itemDelegate renders single-line items. Unlike list.DefaultDelegate it keeps
 // the selected row highlighted while the filter input is active, so ctrl+n/
 // ctrl+p are visible during search.
 type itemDelegate struct {
 	styles list.DefaultItemStyles
-	// number is the distinct color applied to the "#<number>" prefix so it
-	// stands out from the title text in both normal and selected rows.
-	number lipgloss.Style
 }
 
 func newItemDelegate() itemDelegate {
 	return itemDelegate{
 		styles: list.NewDefaultItemStyles(),
-		number: lipgloss.NewStyle().Foreground(accentColor).Inline(true),
 	}
 }
 
@@ -155,9 +157,9 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		// row reads as inactive.
 		title = s.DimmedTitle.Render(title)
 	case isSelected:
-		title = renderTitle(title, prefixLen, m.MatchesForItem(index), isFiltered, s.SelectedTitle, s.FilterMatch, d.number)
+		title = renderTitle(title, prefixLen, m.MatchesForItem(index), isFiltered, s.SelectedTitle, s.FilterMatch, numberStyle)
 	default:
-		title = renderTitle(title, prefixLen, m.MatchesForItem(index), isFiltered, s.NormalTitle, s.FilterMatch, d.number)
+		title = renderTitle(title, prefixLen, m.MatchesForItem(index), isFiltered, s.NormalTitle, s.FilterMatch, numberStyle)
 	}
 	fmt.Fprint(w, title)
 }

@@ -85,12 +85,25 @@ type model struct {
 	// it. It reflects the shortcuts of whichever view (list/detail) is active.
 	showHelp bool
 
+	// showSettings toggles the palette-picker overlay (opened with `t` in list
+	// view). settingsCursor indexes into palettes; moving it live-previews the
+	// highlighted palette via applyPalette. settingsPrev remembers the palette
+	// active when the menu opened so esc can restore it (Enter keeps the
+	// previewed one and persists it).
+	showSettings   bool
+	settingsCursor int
+	settingsPrev   Palette
+
 	// Async state
 	loading bool
 	err     error
 }
 
 func newModel() model {
+	// Restore the persisted palette (falls back to the default on a missing,
+	// unreadable, or unknown config) before any rendering reads the globals.
+	applyPalette(loadPalette())
+
 	m := model{
 		tabs:      []string{"Issues", "PRs"},
 		activeTab: tabIssues,
@@ -254,6 +267,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// The settings (palette picker) overlay captures keys while open:
+		// up/down (and j/k, ctrl+n/ctrl+p) move the selection and live-preview
+		// the highlighted palette; enter confirms+persists+closes; esc/ctrl+g
+		// cancels (restoring the pre-open palette) and closes; ctrl+c still
+		// quits; every other key is swallowed.
+		if m.showSettings {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "down", "j", "ctrl+n":
+				if m.settingsCursor < len(palettes)-1 {
+					m.settingsCursor++
+					applyPalette(palettes[m.settingsCursor])
+				}
+			case "up", "k", "ctrl+p":
+				if m.settingsCursor > 0 {
+					m.settingsCursor--
+					applyPalette(palettes[m.settingsCursor])
+				}
+			case "enter":
+				// Keep the previewed palette and persist it. A failed write is
+				// ignored so the TUI never crashes (the choice just isn't saved).
+				applyPalette(palettes[m.settingsCursor])
+				_ = saveConfig(config{Palette: palettes[m.settingsCursor].Name})
+				m.showSettings = false
+			case "esc", "ctrl+g":
+				// Cancel: restore the palette active when the menu opened.
+				applyPalette(m.settingsPrev)
+				m.showSettings = false
+			}
+			return m, nil
+		}
+
 		if m.detailOpen {
 			// ctrl+c always quits, even mid-search.
 			if msg.String() == "ctrl+c" {
@@ -401,6 +447,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "?":
 			m.showHelp = true
+			return m, nil
+		case "t":
+			// Open the palette picker. Remember the active palette so esc can
+			// restore it, and seed the cursor on the active palette.
+			idx := paletteIndex(activePaletteName())
+			m.showSettings = true
+			m.settingsPrev = palettes[idx]
+			m.settingsCursor = idx
 			return m, nil
 		case "q", "ctrl+c", "ctrl+g":
 			return m, tea.Quit

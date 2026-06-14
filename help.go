@@ -72,6 +72,7 @@ func (m model) currentShortcuts() []shortcut {
 		{"g/G", "first/last"},
 		{"/", "filter"},
 		{"enter", "open"},
+		{"t", "theme"},
 		{"r", "refresh"},
 		{"?", "toggle help"},
 	}
