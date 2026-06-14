@@ -1136,11 +1136,13 @@ func (m model) renderList() string {
 // shows context-aware key hints. It is rendered in both the list and detail
 // views.
 func (m model) renderStatusBar() string {
-	leftStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Bold(true)
-	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
-	// The loading indicator is deliberately quiet: dim gray + faint so it never
-	// competes with the bold blue left text or the key hints.
-	loadingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89")).Faint(true)
+	// Every status-bar element shares one uniform color (#565f89, the dim gray
+	// formerly used only for the `? help` hint) so the bar reads as a single
+	// quiet line rather than a mix of bold blue + dim gray.
+	barStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
+	leftStyle := barStyle
+	hintStyle := barStyle
+	loadingStyle := barStyle
 
 	// The full shortcut list now lives in the `?` overlay (see renderHelp); the
 	// bar shows only the compact hint so it stays uncluttered — identical in
@@ -1187,8 +1189,7 @@ func (m model) renderStatusBar() string {
 	// manual refresh where the body is already populated. Background auto-refresh
 	// ticks do not set these flags (see refreshCurrentView), so the bar stays
 	// quiet on every interval. The indicator clears automatically once the
-	// loading flags are reset on completion or error. It is styled separately
-	// (dim) and prepended so it never inherits the bold blue left text style.
+	// loading flags are reset on completion or error.
 	if m.loading || m.detailLoading || m.detailDiffLoading {
 		indicator := loadingStyle.Render(loadingIndicator)
 		if hasLeft {

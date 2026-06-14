@@ -7,7 +7,17 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
+
+// barColorSGR is the 24-bit SGR for #565f89 (RGB 86,95,137) — the single
+// uniform foreground every status-bar element must use.
+const barColorSGR = "38;2;86;95;137"
+
+// blueAccentSGR is the 24-bit SGR for the old bold-blue #7aa2f7 (RGB
+// 121,162,247) the status bar must no longer emit.
+const blueAccentSGR = "38;2;121;162;247"
 
 // The list view's status bar no longer shows a bare mode label (the tabs row
 // above already conveys mode); it shows only the core key hints when not
@@ -366,5 +376,70 @@ func TestStatusBarShowsLiveFilterWhileTyping(t *testing.T) {
 	bar = tm.(model).renderStatusBar()
 	if !strings.Contains(bar, "/be") {
 		t.Errorf("status bar missing live typed filter value: %q", bar)
+	}
+}
+
+// Every status-bar element shares one uniform foreground (#565f89): the filter
+// query, separator, loading indicator, and help hint. The old bold-blue accent
+// (#7aa2f7) must not appear anywhere in the bar, in either list or detail view.
+func TestStatusBarUniformColor(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	// List view: active filter query + loading indicator + ` · ` separator +
+	// help hint all rendered together so every styled element is exercised.
+	var tm tea.Model = newModel()
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: []list.Item{
+		item{number: 1, title: "alpha", type_: "issue"},
+		item{number: 2, title: "beta", type_: "issue"},
+	}})
+	// Type a filter query, then mark a fetch in flight so the loading indicator,
+	// the ` · ` separator, and the filter text all render at once.
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a', 'l'}})
+	lm := tm.(model)
+	lm.loading = true
+	listBar := lm.renderStatusBar()
+	if !strings.Contains(listBar, "/al") {
+		t.Fatalf("setup: list bar missing filter query: %q", listBar)
+	}
+	if !strings.Contains(listBar, loadingIndicator) {
+		t.Fatalf("setup: list bar missing loading indicator: %q", listBar)
+	}
+
+	// Detail view: item-kind label + help hint.
+	dm := newModel()
+	dm.issueList.SetItems([]list.Item{item{number: 5, title: "x", body: "y", type_: "issue"}})
+	dm.loading = false
+	var dtm tea.Model = dm
+	dtm, _ = dtm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	dtm, _ = dtm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	detailBar := dtm.(model).renderStatusBar()
+
+	for _, tc := range []struct {
+		name string
+		bar  string
+	}{
+		{"list", listBar},
+		{"detail", detailBar},
+	} {
+		if !strings.Contains(tc.bar, barColorSGR) {
+			t.Errorf("%s bar missing uniform color %q: %q", tc.name, barColorSGR, tc.bar)
+		}
+		if strings.Contains(tc.bar, blueAccentSGR) {
+			t.Errorf("%s bar still emits bold-blue accent %q: %q", tc.name, blueAccentSGR, tc.bar)
+		}
+		// No other 24-bit foreground SGR should appear: every "38;2;" run must be
+		// the uniform color. This guards against any element keeping a distinct hue.
+		// Split drops the leading segment (text before the first match); every
+		// remaining segment begins immediately after a "38;2;" introducer.
+		segs := strings.Split(tc.bar, "38;2;")
+		for _, seg := range segs[1:] {
+			if !strings.HasPrefix(seg, "86;95;137") {
+				t.Errorf("%s bar has a non-uniform foreground color: %q", tc.name, tc.bar)
+			}
+		}
 	}
 }
