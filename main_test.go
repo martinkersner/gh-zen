@@ -20,7 +20,27 @@ import (
 //
 // Tests that need color (number_color_test.go, statusbar_test.go) explicitly set
 // their own profile and restore the previous one, so they are unaffected.
+//
+// TestMain also isolates the config dir for the whole package. newModel() calls
+// applyPalette(loadPalette()), and loadPalette -> loadConfig -> configPath uses
+// os.UserConfigDir(). Without isolation that resolves to the real user config,
+// so a developer's persisted non-default palette (e.g. {"palette":"Dracula"})
+// poisons the package-level color globals and breaks color-asserting tests
+// (TestStatusBarUniformColor, TestPaletteDarkMatchesTokyoNight). Pointing both
+// HOME (macOS Application Support) and XDG_CONFIG_HOME (Linux) at an empty temp
+// dir makes loadPalette fall back to the default palette regardless of the host
+// config. Issue #118.
 func TestMain(m *testing.M) {
 	lipgloss.SetColorProfile(termenv.Ascii)
-	os.Exit(m.Run())
+
+	dir, err := os.MkdirTemp("", "gh-zen-test-config")
+	if err != nil {
+		panic("TestMain: create temp config dir: " + err.Error())
+	}
+	os.Setenv("HOME", dir)
+	os.Setenv("XDG_CONFIG_HOME", dir)
+
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
