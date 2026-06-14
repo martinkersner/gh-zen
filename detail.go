@@ -27,6 +27,37 @@ func detailViewportSize(width, height, headerHeight int) (int, int) {
 	return w, h
 }
 
+// composeDetailBody folds an issue/PR body and its conversation comments into a
+// single markdown document that flows through the same render/search/cache path
+// as a bare body. Comments are appended under a "Comments" section, each as a
+// bold author attribution followed by the comment body, in the order GitHub
+// returned them (chronological), separated by horizontal rules. Folding into one
+// markdown string (rather than carrying structured comments through the model)
+// keeps the existing bodyMsg/detailBody/bodyCache lifecycle and in-detail search
+// untouched; bold authors give clear per-comment attribution within that.
+//
+// With no comments it returns the body verbatim so the empty-state and
+// "Loading body..." handling in detailWrappedLines stay exactly as before.
+func composeDetailBody(body string, comments []comment) string {
+	if len(comments) == 0 {
+		return body
+	}
+	var b strings.Builder
+	b.WriteString(body)
+	b.WriteString("\n\n## Comments\n")
+	for _, c := range comments {
+		author := c.author
+		if author == "" {
+			author = "(unknown)"
+		}
+		b.WriteString("\n---\n\n")
+		b.WriteString(fmt.Sprintf("**@%s**\n\n", author))
+		b.WriteString(c.body)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 // detailMatchStyle / detailActiveMatchStyle style search hits in the detail
 // body: every match gets the muted highlight, the current (active) match a
 // brighter one so it stands out as ctrl+n/ctrl+p step through occurrences.

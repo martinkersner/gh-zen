@@ -195,3 +195,44 @@ func TestDetailHeaderLeftMargin(t *testing.T) {
 		}
 	}
 }
+
+func TestComposeDetailBodyNoComments(t *testing.T) {
+	// With no comments the body must be returned verbatim so the empty-state and
+	// loading handling in detailWrappedLines stay unchanged.
+	if got := composeDetailBody("just the body", nil); got != "just the body" {
+		t.Errorf("composeDetailBody(no comments) = %q, want verbatim body", got)
+	}
+}
+
+func TestComposeDetailBodyWithComments(t *testing.T) {
+	out := composeDetailBody("the body", []comment{
+		{author: "alice", body: "first"},
+		{author: "bob", body: "second"},
+	})
+	// Body preserved at the top, comments appended under a Comments section in
+	// order, each with a bold @author attribution.
+	if !strings.HasPrefix(out, "the body") {
+		t.Errorf("body not preserved at top:\n%s", out)
+	}
+	if !strings.Contains(out, "## Comments") {
+		t.Errorf("missing Comments section:\n%s", out)
+	}
+	idxAlice := strings.Index(out, "**@alice**")
+	idxBob := strings.Index(out, "**@bob**")
+	if idxAlice < 0 || idxBob < 0 {
+		t.Fatalf("missing author attributions:\n%s", out)
+	}
+	if idxAlice > idxBob {
+		t.Errorf("comments out of order: alice should precede bob:\n%s", out)
+	}
+	if !strings.Contains(out, "first") || !strings.Contains(out, "second") {
+		t.Errorf("comment bodies missing:\n%s", out)
+	}
+}
+
+func TestComposeDetailBodyEmptyAuthor(t *testing.T) {
+	out := composeDetailBody("b", []comment{{author: "", body: "ghost"}})
+	if !strings.Contains(out, "**@(unknown)**") {
+		t.Errorf("empty author not labeled as unknown:\n%s", out)
+	}
+}

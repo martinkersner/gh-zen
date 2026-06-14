@@ -70,17 +70,31 @@ type errMsg struct {
 	err error
 }
 
-// fetchBody pulls the current body for a single issue or PR from GitHub. It is a
-// blocking call meant to run inside a tea.Cmd. Kept separate from the list fetch
-// so the detail diff (fetchDiff) can grow independently.
-func fetchBody(number int, isPR bool) (string, error) {
+// commentsFetchLimit caps how many issue/PR conversation comments are pulled
+// per detail view. Bounded so a long thread can't make the single round-trip
+// (and the resulting markdown render) unbounded.
+const commentsFetchLimit = 50
+
+// comment is a single conversation comment (author login + markdown body) on an
+// issue or PR, in the order GitHub returns it (chronological).
+type comment struct {
+	author string
+	body   string
+}
+
+// fetchBody pulls the current body plus the conversation comments for a single
+// issue or PR from GitHub. It is a blocking call meant to run inside a tea.Cmd.
+// Kept separate from the list fetch so the detail diff (fetchDiff) can grow
+// independently. For PRs this is the issue-comment thread; review comments live
+// under a separate connection and are out of scope here.
+func fetchBody(number int, isPR bool) (string, []comment, error) {
 	client, err := newGraphQLClient()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	repo, err := currentRepo()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	field := "issue"
@@ -88,38 +102,58 @@ func fetchBody(number int, isPR bool) (string, error) {
 		field = "pullRequest"
 	}
 	query := fmt.Sprintf(`
-		query($owner: String!, $repo: String!, $number: Int!) {
+		query($owner: String!, $repo: String!, $number: Int!, $comments: Int!) {
 			repository(owner: $owner, name: $repo) {
 				%s(number: $number) {
 					body
+					comments(first: $comments) {
+						nodes {
+							author { login }
+							body
+						}
+					}
 				}
 			}
 		}
 	`, field)
 	variables := map[string]interface{}{
-		"owner":  repo.Owner,
-		"repo":   repo.Name,
-		"number": number,
+		"owner":    repo.Owner,
+		"repo":     repo.Name,
+		"number":   number,
+		"comments": commentsFetchLimit,
 	}
 
+	type commentNode struct {
+		Author struct {
+			Login string `json:"login"`
+		} `json:"author"`
+		Body string `json:"body"`
+	}
+	type detail struct {
+		Body     string `json:"body"`
+		Comments struct {
+			Nodes []commentNode `json:"nodes"`
+		} `json:"comments"`
+	}
 	type response struct {
 		Repository struct {
-			Issue struct {
-				Body string `json:"body"`
-			} `json:"issue"`
-			PullRequest struct {
-				Body string `json:"body"`
-			} `json:"pullRequest"`
+			Issue       detail `json:"issue"`
+			PullRequest detail `json:"pullRequest"`
 		} `json:"repository"`
 	}
 	var resp response
 	if err := client.Do(query, variables, &resp); err != nil {
-		return "", err
+		return "", nil, err
 	}
+	d := resp.Repository.Issue
 	if isPR {
-		return resp.Repository.PullRequest.Body, nil
+		d = resp.Repository.PullRequest
 	}
-	return resp.Repository.Issue.Body, nil
+	comments := make([]comment, 0, len(d.Comments.Nodes))
+	for _, n := range d.Comments.Nodes {
+		comments = append(comments, comment{author: n.Author.Login, body: n.Body})
+	}
+	return d.Body, comments, nil
 }
 
 // ghDiff shells out to `gh pr diff <number>` and returns its stdout. It is a

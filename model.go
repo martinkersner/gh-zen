@@ -437,9 +437,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailBody = m.cachedBody(it)
 				m.detailLoading = m.detailBody == ""
 				m.openDetailViewport()
-				if m.detailLoading {
-					cmds = append(cmds, m.cmdFetchBody(it))
-				}
+				// Always fetch on open so the conversation comments (which the
+				// cheap list/prefetch body lacks) are pulled. A cached body is
+				// shown immediately above, so the fetch only surfaces the
+				// "Loading body..." placeholder when there's nothing cached; on
+				// arrival the bodyMsg handler swaps in body+comments, preserving
+				// scroll.
+				cmds = append(cmds, m.cmdFetchBody(it))
 				// Prefetch the PR diff in the background so the first `d` toggle
 				// usually serves from diffCache instead of blocking on a fetch. No
 				// detailDiffLoading flag is set: this is silent (like body prefetch),
@@ -612,11 +616,11 @@ func (m model) cmdFetchBody(it *item) tea.Cmd {
 	number := it.number
 	isPR := it.type_ == "pr"
 	return func() tea.Msg {
-		body, err := fetchBody(number, isPR)
+		body, comments, err := fetchBody(number, isPR)
 		if err != nil {
 			return bodyMsg{key: key, err: err}
 		}
-		return bodyMsg{key: key, body: body}
+		return bodyMsg{key: key, body: composeDetailBody(body, comments)}
 	}
 }
 

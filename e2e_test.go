@@ -58,9 +58,26 @@ func stubFetch(t *testing.T) {
 		return func() tea.Msg { return seedData() }
 	}
 	ghDiff = func(int) (string, error) { return "+added line\n-removed line\n", nil }
+	// Opening a detail view always fires cmdFetchBody (to pull comments the
+	// cheap list body lacks), so the GraphQL seam must be stubbed too or the
+	// e2e program would make a real network call in the background. The canned
+	// payload returns the seeded body plus one comment per item.
+	origClient := newGraphQLClient
+	origRepo := currentRepo
+	newGraphQLClient = func() (graphQLClient, error) {
+		return &fakeGraphQLClient{
+			respJSON: `{"repository":{
+				"issue":{"body":"issue body line one\nneedle marker here\nissue body line three","comments":{"nodes":[{"author":{"login":"alice"},"body":"a seeded comment"}]}},
+				"pullRequest":{"body":"pr body text","comments":{"nodes":[{"author":{"login":"bob"},"body":"a seeded comment"}]}}
+			}}`,
+		}, nil
+	}
+	currentRepo = func() (repoInfo, error) { return testRepo(), nil }
 	t.Cleanup(func() {
 		fetchIssuesAndPRs = origFetch
 		ghDiff = origDiff
+		newGraphQLClient = origClient
+		currentRepo = origRepo
 	})
 }
 
@@ -149,6 +166,22 @@ func TestE2EOpenDetail(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
 		return bytes.Contains(b, []byte("second issue beta"))
+	}, teatest.WithDuration(e2eWaitTimeout))
+	quit(t, tm)
+}
+
+// Opening an issue detail fetches and renders the conversation comments below
+// the body: the Comments section, the author attribution, and the comment text
+// all appear after the body content.
+func TestE2EDetailComments(t *testing.T) {
+	tm := newSeededModel(t)
+	waitForList(t, tm)
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
+		return bytes.Contains(b, []byte("issue body line one")) &&
+			bytes.Contains(b, []byte("Comments")) &&
+			bytes.Contains(b, []byte("alice")) &&
+			bytes.Contains(b, []byte("a seeded comment"))
 	}, teatest.WithDuration(e2eWaitTimeout))
 	quit(t, tm)
 }
