@@ -305,22 +305,32 @@ func (m *model) currentList() *list.Model {
 // handlers (dataMsg restores the list index; bodyMsg keeps the viewport offset
 // on a same-item refresh).
 //
-// It sets the matching loading flag so the status-bar indicator (see
-// renderStatusBar) reflects in-flight background fetches even though the body
-// stays populated; the flag is cleared by the corresponding message handler on
-// completion or error. Pointer receiver so the flag set persists in the caller.
-func (m *model) refreshCurrentView() tea.Cmd {
+// For a user-triggered refresh (background == false) it sets the matching
+// loading flag so the status-bar indicator (see renderStatusBar) reflects the
+// in-flight fetch even though the body stays populated; the flag is cleared by
+// the corresponding message handler on completion or error. For a background
+// auto-refresh tick (background == true) the fetch still runs but the loading
+// flag is left untouched, so the indicator does not flicker on every interval
+// when the view is already populated. Pointer receiver so the flag set persists
+// in the caller.
+func (m *model) refreshCurrentView(background bool) tea.Cmd {
 	if m.detailOpen && m.detailItem != nil {
 		// In the PR diff sub-view, refresh the diff rather than the body so the
 		// visible content is what actually gets updated.
 		if m.detailShowDiff {
-			m.detailDiffLoading = true
+			if !background {
+				m.detailDiffLoading = true
+			}
 			return m.cmdFetchDiff(m.detailItem)
 		}
-		m.detailLoading = true
+		if !background {
+			m.detailLoading = true
+		}
 		return m.cmdFetchBody(m.detailItem)
 	}
-	m.loading = true
+	if !background {
+		m.loading = true
+	}
 	return fetchIssuesAndPRs()
 }
 
@@ -514,7 +524,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailViewport.GotoBottom()
 				return m, nil
 			case "r":
-				return m, m.refreshCurrentView()
+				return m, m.refreshCurrentView(false)
 			}
 			// Forward scroll keys (arrows, pgup/pgdn, j/k) to the viewport.
 			var cmd tea.Cmd
@@ -554,7 +564,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c", "ctrl+g":
 			return m, tea.Quit
 		case "r":
-			return m, m.refreshCurrentView()
+			return m, m.refreshCurrentView(false)
 		case "tab", "l", "right":
 			m.activeTab = (m.activeTab + 1) % tab(len(m.tabs))
 			m.updateListSize()
@@ -683,7 +693,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// fetch while the user is mid-filter so the list isn't reshuffled under
 		// them; the ticker still keeps running.
 		if m.detailOpen || !m.currentList().SettingFilter() {
-			cmds = append(cmds, m.refreshCurrentView())
+			cmds = append(cmds, m.refreshCurrentView(true))
 		}
 		cmds = append(cmds, tickCmd())
 		return m, tea.Batch(cmds...)
@@ -1119,14 +1129,18 @@ func (m model) renderList() string {
 // renderStatusBar renders the one-line bar pinned to the bottom of the screen.
 // In the list view the left side shows the active filter query when filtering
 // (otherwise it is empty — the mode is conveyed by the tabs row above); in the
-// detail view it shows the item kind. While a fetch is in flight the left side
-// is prefixed with a loading indicator (see loadingIndicator) so activity stays
-// visible even when the body is already populated (refresh, lazy diff). The
-// right side shows context-aware key hints. It is rendered in both the list and
-// detail views.
+// detail view it shows the item kind. While a user-visible fetch is in flight
+// the left side is prefixed with a dim loading indicator (see loadingIndicator)
+// so activity stays visible even when the body is already populated (manual
+// refresh, lazy diff); background auto-refresh ticks stay silent. The right side
+// shows context-aware key hints. It is rendered in both the list and detail
+// views.
 func (m model) renderStatusBar() string {
 	leftStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Bold(true)
 	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
+	// The loading indicator is deliberately quiet: dim gray + faint so it never
+	// competes with the bold blue left text or the key hints.
+	loadingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89")).Faint(true)
 
 	// The full shortcut list now lives in the `?` overlay (see renderHelp); the
 	// bar shows only the compact hint so it stays uncluttered — identical in
@@ -1164,20 +1178,25 @@ func (m model) renderStatusBar() string {
 		}
 	}
 
-	// While any fetch is in flight (initial load, refresh, or a lazily-fetched
-	// detail body / PR diff) surface an unobtrusive indicator on the left rather
-	// than relying solely on the body placeholder — this also covers background
-	// refreshes where the body is already populated. It clears automatically once
-	// the loading flags are reset on completion or error.
+	left = leftStyle.Render(left)
+
+	// While a user-visible fetch is in flight (initial load, manual refresh, or a
+	// lazily-fetched detail body / PR diff) surface a dim indicator on the left
+	// rather than relying solely on the body placeholder — this also covers a
+	// manual refresh where the body is already populated. Background auto-refresh
+	// ticks do not set these flags (see refreshCurrentView), so the bar stays
+	// quiet on every interval. The indicator clears automatically once the
+	// loading flags are reset on completion or error. It is styled separately
+	// (dim) and prepended so it never inherits the bold blue left text style.
 	if m.loading || m.detailLoading || m.detailDiffLoading {
+		indicator := loadingStyle.Render(loadingIndicator)
 		if left == "" {
-			left = loadingIndicator
+			left = indicator
 		} else {
-			left = loadingIndicator + " · " + left
+			left = indicator + leftStyle.Render(" · ") + left
 		}
 	}
 
-	left = leftStyle.Render(left)
 	hints = hintStyle.Render(hints)
 
 	// Lay the hints out flush-right, padding the gap to the terminal width. When
