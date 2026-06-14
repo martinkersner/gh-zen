@@ -70,20 +70,41 @@ func testRepo() repoInfo { return repoInfo{Owner: testRepoOwner, Name: testRepoN
 
 func TestFetchBodyIssueSuccess(t *testing.T) {
 	fake := &fakeGraphQLClient{
-		respJSON: `{"repository":{"issue":{"body":"issue body content"},"pullRequest":{"body":"SHOULD NOT BE USED"}}}`,
+		respJSON: `{"repository":{
+			"issue":{"body":"issue body content","comments":{"nodes":[
+				{"author":{"login":"alice"},"body":"first comment"},
+				{"author":{"login":"bob"},"body":"second comment"}
+			]}},
+			"pullRequest":{"body":"SHOULD NOT BE USED","comments":{"nodes":[]}}
+		}}`,
 	}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	body, err := fetchBody(42, false)
+	body, comments, err := fetchBody(42, false)
 	if err != nil {
 		t.Fatalf("fetchBody returned error: %v", err)
 	}
 	if body != "issue body content" {
 		t.Errorf("body = %q, want %q", body, "issue body content")
 	}
+	if len(comments) != 2 {
+		t.Fatalf("got %d comments, want 2", len(comments))
+	}
+	if comments[0].author != "alice" || comments[0].body != "first comment" {
+		t.Errorf("comment[0] = %+v", comments[0])
+	}
+	if comments[1].author != "bob" || comments[1].body != "second comment" {
+		t.Errorf("comment[1] = %+v", comments[1])
+	}
 	// Verify the issue field (not pullRequest) was queried and variables wired.
 	if got := fake.gotVars["number"]; got != 42 {
 		t.Errorf("number var = %v, want 42", got)
+	}
+	if got := fake.gotVars["comments"]; got != commentsFetchLimit {
+		t.Errorf("comments var = %v, want %d", got, commentsFetchLimit)
+	}
+	if !strings.Contains(fake.gotQuery, "comments(first: $comments)") {
+		t.Errorf("query did not request comments:\n%s", fake.gotQuery)
 	}
 	if got := fake.gotVars["owner"]; got != testRepoOwner {
 		t.Errorf("owner var = %v, want %q", got, testRepoOwner)
@@ -98,16 +119,24 @@ func TestFetchBodyIssueSuccess(t *testing.T) {
 
 func TestFetchBodyPRSuccess(t *testing.T) {
 	fake := &fakeGraphQLClient{
-		respJSON: `{"repository":{"issue":{"body":"SHOULD NOT BE USED"},"pullRequest":{"body":"pr body content"}}}`,
+		respJSON: `{"repository":{
+			"issue":{"body":"SHOULD NOT BE USED","comments":{"nodes":[]}},
+			"pullRequest":{"body":"pr body content","comments":{"nodes":[
+				{"author":{"login":"carol"},"body":"pr comment"}
+			]}}
+		}}`,
 	}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	body, err := fetchBody(7, true)
+	body, comments, err := fetchBody(7, true)
 	if err != nil {
 		t.Fatalf("fetchBody returned error: %v", err)
 	}
 	if body != "pr body content" {
 		t.Errorf("body = %q, want %q", body, "pr body content")
+	}
+	if len(comments) != 1 || comments[0].author != "carol" || comments[0].body != "pr comment" {
+		t.Errorf("comments = %+v", comments)
 	}
 	if !strings.Contains(fake.gotQuery, "pullRequest(number: $number)") {
 		t.Errorf("query did not target the pullRequest field:\n%s", fake.gotQuery)
@@ -118,7 +147,7 @@ func TestFetchBodyClientError(t *testing.T) {
 	wantErr := errors.New("no auth token")
 	withFakeGitHub(t, nil, wantErr, testRepo(), nil)
 
-	_, err := fetchBody(1, false)
+	_, _, err := fetchBody(1, false)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
@@ -128,7 +157,7 @@ func TestFetchBodyRepoError(t *testing.T) {
 	wantErr := errors.New("not a git repo")
 	withFakeGitHub(t, &fakeGraphQLClient{}, nil, repoInfo{}, wantErr)
 
-	_, err := fetchBody(1, false)
+	_, _, err := fetchBody(1, false)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
@@ -139,7 +168,7 @@ func TestFetchBodyQueryError(t *testing.T) {
 	fake := &fakeGraphQLClient{err: wantErr}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	_, err := fetchBody(1, false)
+	_, _, err := fetchBody(1, false)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}

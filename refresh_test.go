@@ -154,6 +154,29 @@ func TestBodyRefreshErrorKeepsCachedBody(t *testing.T) {
 	}
 }
 
+// A late prefetch bodyMsg (bare list body, no comments) must not clobber a key a
+// full fetch already populated with body+comments. Regression for the tick-can-
+// enqueue-prefetch-while-full-fetch-in-flight race.
+func TestPrefetchDoesNotClobberFullBody(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: []list.Item{
+		item{number: 1, title: "x", body: "list body", type_: "issue"},
+	}})
+	key := cacheKey(&item{number: 1, type_: "issue"})
+
+	// Full fetch lands first with body+comments.
+	full := composeDetailBody("real body", []comment{{author: "alice", body: "hi"}})
+	tm, _ = tm.Update(bodyMsg{key: key, body: full})
+	// A late prefetch (bare body) arrives afterwards; it must be ignored.
+	tm, _ = tm.Update(bodyMsg{key: key, body: "list body", prefetch: true})
+
+	if got := tm.(model).bodyCache[key]; got != full {
+		t.Errorf("prefetch clobbered full body+comments:\n got %q\nwant %q", got, full)
+	}
+}
+
 // A refresh (dataMsg) delivered while a filter is applied must recompute the
 // filtered/visible set so the visible list reflects the new items, and the
 // restored selection must land on the correct visible row. Regression for the
