@@ -18,11 +18,18 @@ const statusBarHeight = 1
 
 // loadingIndicator is the unobtrusive marker shown on the left of the status bar
 // while a user-visible fetch is in flight (initial load, manual refresh, or a
-// lazily-fetched detail body / PR diff). It keeps activity visible without
-// blanking content. Background auto-refresh ticks deliberately do not raise it
+// lazily-fetched detail body). A PR diff fetch uses the diff-specific label
+// (loadingDiffIndicator) instead. It keeps activity visible without blanking
+// content. Background auto-refresh ticks deliberately do not raise it
 // (see refreshCurrentView) so the bar doesn't flicker every interval. Rendered
 // dim/faint with no leading glyph so it reads as quiet, not attention-grabbing.
 const loadingIndicator = "loading…"
+
+// loadingDiffIndicator is the status-bar label shown specifically while the PR
+// diff is being fetched (lazy first-toggle or background prefetch on detail
+// entry). It replaces the old in-view "Loading diff..." placeholder: the diff
+// sub-view is no longer blanked while loading; activity is surfaced only here.
+const loadingDiffIndicator = "loading diff…"
 
 // tickMsg is emitted by the auto-refresh ticker. Each tick triggers a refresh of
 // the current view and re-arms the ticker.

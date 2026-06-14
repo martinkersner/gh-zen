@@ -17,6 +17,27 @@ func withStubDiff(t *testing.T, fn func(number int) (string, error)) {
 	t.Cleanup(func() { ghDiff = orig })
 }
 
+// drainBatch runs a (possibly batched) command and returns the flat list of
+// concrete messages it produces. tea.Batch returns a tea.BatchMsg (a slice of
+// commands) when executed, so this expands one level of batching to recover the
+// individual messages (e.g. the body fetch and diff prefetch dispatched on
+// detail entry). nil sub-commands are skipped.
+func drainBatch(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	var out []tea.Msg
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		for _, c := range msg {
+			out = append(out, drainBatch(c)...)
+		}
+	default:
+		out = append(out, msg)
+	}
+	return out
+}
+
 // openPRDetail opens the detail view on a single PR and returns the model.
 func openPRDetail(t *testing.T) tea.Model {
 	t.Helper()
@@ -122,6 +143,99 @@ func TestDiffToggleUsesCache(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("fetchDiff called %d times, want 1 (cache reuse)", calls)
+	}
+}
+
+// Opening a PR detail prefetches the diff in the background (no detailDiffLoading
+// flag, no diff sub-view) so it is cached by the time the user toggles. The first
+// toggle then serves from cache: no loading state and no second fetch.
+func TestDiffPrefetchedOnDetailEntry(t *testing.T) {
+	calls := 0
+	withStubDiff(t, func(number int) (string, error) {
+		calls++
+		if number != 7 {
+			t.Errorf("fetchDiff called with number %d, want 7", number)
+		}
+		return "diff --git a/f b/f\n+prefetched\n", nil
+	})
+
+	m := newModel()
+	m.prList.SetItems([]list.Item{
+		item{number: 7, title: "a pr", body: "pr body", type_: "pr"},
+	})
+	m.activeTab = tabPRs
+	m.loading = false
+
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Enter the detail: the background diff prefetch is part of the returned cmd.
+	tm, cmd := tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm := tm.(model)
+	if mm.detailShowDiff {
+		t.Error("entry must not switch into the diff sub-view")
+	}
+	if mm.detailDiffLoading {
+		t.Error("background prefetch must not raise detailDiffLoading on entry")
+	}
+	if cmd == nil {
+		t.Fatal("entry returned nil cmd; no diff prefetch dispatched")
+	}
+
+	// Run the batched entry cmd and deliver every resulting message; the diffMsg
+	// caches the diff without opening the sub-view.
+	for _, msg := range drainBatch(cmd) {
+		tm, _ = tm.Update(msg)
+	}
+	mm = tm.(model)
+	if mm.diffCache[cacheKey(mm.detailItem)] == "" {
+		t.Fatal("diff was not prefetched into the cache on entry")
+	}
+	if mm.detailShowDiff {
+		t.Error("prefetch delivery must not switch into the diff sub-view")
+	}
+	if calls != 1 {
+		t.Fatalf("prefetch fetched %d times, want 1", calls)
+	}
+
+	// First toggle now serves from cache: no loading, no second fetch.
+	tm, cmd = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	mm = tm.(model)
+	if !mm.detailShowDiff {
+		t.Fatal("d did not toggle into diff view")
+	}
+	if mm.detailDiffLoading {
+		t.Error("toggle after prefetch should not show a loading state")
+	}
+	if cmd != nil {
+		t.Error("toggle after prefetch should not dispatch a fetch")
+	}
+	if calls != 1 {
+		t.Errorf("fetchDiff called %d times, want 1 (served from prefetch)", calls)
+	}
+	if !strings.Contains(mm.detailDiff, "prefetched") {
+		t.Errorf("toggled view did not show the prefetched diff: %q", mm.detailDiff)
+	}
+}
+
+// While the diff is loading (first toggle, prefetch not yet landed) the sub-view
+// is left blank rather than showing an in-view "Loading diff..." placeholder; the
+// activity is surfaced only in the status bar.
+func TestDiffLoadingLeavesViewBlank(t *testing.T) {
+	withStubDiff(t, func(number int) (string, error) { return "x\n", nil })
+
+	tm := openPRDetail(t)
+	// Toggle into the diff before delivering any diffMsg: loading state on.
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	mm := tm.(model)
+	if !mm.detailDiffLoading {
+		t.Fatal("setup: expected detailDiffLoading while fetching")
+	}
+	if got := mm.detailDiffContent(); strings.Contains(got, "Loading diff") {
+		t.Errorf("loading diff should not render an in-view placeholder, got %q", got)
+	}
+	if !strings.Contains(mm.renderStatusBar(), loadingDiffIndicator) {
+		t.Errorf("status bar should show the diff loading label, got %q", mm.renderStatusBar())
 	}
 }
 
