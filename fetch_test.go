@@ -71,7 +71,7 @@ func testRepo() repoInfo { return repoInfo{Owner: testRepoOwner, Name: testRepoN
 func TestFetchBodyIssueSuccess(t *testing.T) {
 	fake := &fakeGraphQLClient{
 		respJSON: `{"repository":{
-			"issue":{"body":"issue body content","comments":{"nodes":[
+			"issue":{"body":"issue body content","comments":{"totalCount":2,"nodes":[
 				{"author":{"login":"alice"},"body":"first comment"},
 				{"author":{"login":"bob"},"body":"second comment"}
 			]}},
@@ -80,7 +80,7 @@ func TestFetchBodyIssueSuccess(t *testing.T) {
 	}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	body, comments, err := fetchBody(42, false)
+	body, comments, total, err := fetchBody(42, false)
 	if err != nil {
 		t.Fatalf("fetchBody returned error: %v", err)
 	}
@@ -89,6 +89,12 @@ func TestFetchBodyIssueSuccess(t *testing.T) {
 	}
 	if len(comments) != 2 {
 		t.Fatalf("got %d comments, want 2", len(comments))
+	}
+	if total != 2 {
+		t.Errorf("totalCount = %d, want 2", total)
+	}
+	if !strings.Contains(fake.gotQuery, "totalCount") {
+		t.Errorf("query did not request totalCount:\n%s", fake.gotQuery)
 	}
 	if comments[0].author != "alice" || comments[0].body != "first comment" {
 		t.Errorf("comment[0] = %+v", comments[0])
@@ -121,14 +127,14 @@ func TestFetchBodyPRSuccess(t *testing.T) {
 	fake := &fakeGraphQLClient{
 		respJSON: `{"repository":{
 			"issue":{"body":"SHOULD NOT BE USED","comments":{"nodes":[]}},
-			"pullRequest":{"body":"pr body content","comments":{"nodes":[
+			"pullRequest":{"body":"pr body content","comments":{"totalCount":60,"nodes":[
 				{"author":{"login":"carol"},"body":"pr comment"}
 			]}}
 		}}`,
 	}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	body, comments, err := fetchBody(7, true)
+	body, comments, total, err := fetchBody(7, true)
 	if err != nil {
 		t.Fatalf("fetchBody returned error: %v", err)
 	}
@@ -137,6 +143,11 @@ func TestFetchBodyPRSuccess(t *testing.T) {
 	}
 	if len(comments) != 1 || comments[0].author != "carol" || comments[0].body != "pr comment" {
 		t.Errorf("comments = %+v", comments)
+	}
+	// totalCount can exceed the returned node count when the thread is longer
+	// than commentsFetchLimit; fetchBody surfaces the true total.
+	if total != 60 {
+		t.Errorf("totalCount = %d, want 60", total)
 	}
 	if !strings.Contains(fake.gotQuery, "pullRequest(number: $number)") {
 		t.Errorf("query did not target the pullRequest field:\n%s", fake.gotQuery)
@@ -147,7 +158,7 @@ func TestFetchBodyClientError(t *testing.T) {
 	wantErr := errors.New("no auth token")
 	withFakeGitHub(t, nil, wantErr, testRepo(), nil)
 
-	_, _, err := fetchBody(1, false)
+	_, _, _, err := fetchBody(1, false)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
@@ -157,7 +168,7 @@ func TestFetchBodyRepoError(t *testing.T) {
 	wantErr := errors.New("not a git repo")
 	withFakeGitHub(t, &fakeGraphQLClient{}, nil, repoInfo{}, wantErr)
 
-	_, _, err := fetchBody(1, false)
+	_, _, _, err := fetchBody(1, false)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
@@ -168,7 +179,7 @@ func TestFetchBodyQueryError(t *testing.T) {
 	fake := &fakeGraphQLClient{err: wantErr}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	_, _, err := fetchBody(1, false)
+	_, _, _, err := fetchBody(1, false)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
