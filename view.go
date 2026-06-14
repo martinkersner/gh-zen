@@ -17,6 +17,11 @@ func (m model) View() string {
 		return m.renderHelp()
 	}
 
+	// The palette picker likewise replaces the underlying view while open.
+	if m.showSettings {
+		return m.renderSettings()
+	}
+
 	if m.detailOpen {
 		return m.renderDetail()
 	}
