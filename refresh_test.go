@@ -167,7 +167,7 @@ func TestPrefetchDoesNotClobberFullBody(t *testing.T) {
 	key := cacheKey(&item{number: 1, type_: "issue"})
 
 	// Full fetch lands first with body+comments.
-	full := composeDetailBody("real body", []comment{{author: "alice", body: "hi"}})
+	full := composeDetailBody("real body", []comment{{author: "alice", body: "hi"}}, 1)
 	tm, _ = tm.Update(bodyMsg{key: key, body: full})
 	// A late prefetch (bare body) arrives afterwards; it must be ignored.
 	tm, _ = tm.Update(bodyMsg{key: key, body: "list body", prefetch: true})

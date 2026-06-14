@@ -678,11 +678,11 @@ func (m model) cmdFetchBody(it *item) tea.Cmd {
 	number := it.number
 	isPR := it.type_ == "pr"
 	return func() tea.Msg {
-		body, comments, err := fetchBody(number, isPR)
+		body, comments, total, err := fetchBody(number, isPR)
 		if err != nil {
 			return bodyMsg{key: key, err: err}
 		}
-		return bodyMsg{key: key, body: composeDetailBody(body, comments)}
+		return bodyMsg{key: key, body: composeDetailBody(body, comments, total)}
 	}
 }
 
