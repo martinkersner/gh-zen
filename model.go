@@ -281,9 +281,10 @@ func newModel() model {
 	m.issueList.Styles.NoItems = m.issueList.Styles.NoItems.PaddingLeft(2)
 	m.prList.Styles.NoItems = m.prList.Styles.NoItems.PaddingLeft(2)
 
-	// Move with ctrl+n / ctrl+p (and arrows); drop j/k.
-	up := key.NewBinding(key.WithKeys("up", "ctrl+p"), key.WithHelp("ctrl+p", "up"))
-	down := key.NewBinding(key.WithKeys("down", "ctrl+n"), key.WithHelp("ctrl+n", "down"))
+	// Move with j/k, ctrl+n / ctrl+p (and arrows). bubbletea's list disables the
+	// cursor keymap while filtering, so j/k stay literal input in the filter box.
+	up := key.NewBinding(key.WithKeys("up", "ctrl+p", "k"), key.WithHelp("ctrl+p", "up"))
+	down := key.NewBinding(key.WithKeys("down", "ctrl+n", "j"), key.WithHelp("ctrl+n", "down"))
 	for _, l := range []*list.Model{&m.issueList, &m.prList} {
 		l.KeyMap.CursorUp = up
 		l.KeyMap.CursorDown = down

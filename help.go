@@ -68,6 +68,7 @@ func (m model) currentShortcuts() []shortcut {
 	return []shortcut{
 		{"q/esc/ctrl+g", "quit"},
 		{"tab", "switch tab"},
+		{"j/k or ctrl+n/ctrl+p", "down/up"},
 		{"g/G", "first/last"},
 		{"/", "filter"},
 		{"enter", "open"},
