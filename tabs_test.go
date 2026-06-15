@@ -77,7 +77,7 @@ func TestListHeightReservesBlankLineAndStatusBar(t *testing.T) {
 
 		// Fill the list with more items than can fit so the body is at full height.
 		items := make([]list.Item, 0, h)
-		for i := 0; i < h; i++ {
+		for i := range h {
 			items = append(items, item{number: i + 1, title: "row", type_: "issue"})
 		}
 		tm, _ = tm.Update(dataMsg{issues: items})
