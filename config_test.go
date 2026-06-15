@@ -35,6 +35,51 @@ func TestConfigRoundTrip(t *testing.T) {
 	}
 }
 
+// saveConfig surfaces a MkdirAll failure: when a path component of the config
+// dir is an existing regular file (not a directory), os.MkdirAll can't create
+// the dir and the error is returned rather than swallowed.
+func TestSaveConfigMkdirAllError(t *testing.T) {
+	tempConfigDir(t)
+
+	path, err := configPath()
+	if err != nil {
+		t.Fatalf("configPath: %v", err)
+	}
+	// Create a regular file where the "gh-zen" config dir should be, so MkdirAll
+	// of its parent (filepath.Dir(path)) fails on a non-directory component.
+	ghZenDir := filepath.Dir(path)
+	if err := os.MkdirAll(filepath.Dir(ghZenDir), 0o755); err != nil {
+		t.Fatalf("setup mkdir: %v", err)
+	}
+	if err := os.WriteFile(ghZenDir, []byte("not a dir"), 0o644); err != nil {
+		t.Fatalf("setup write blocking file: %v", err)
+	}
+
+	if err := saveConfig(config{Palette: "Dracula"}); err == nil {
+		t.Error("saveConfig should return an error when the config dir can't be created")
+	}
+}
+
+// saveConfig surfaces a WriteFile failure: when the target config.json path is
+// already a directory, the write can't succeed and the error is returned.
+func TestSaveConfigWriteFileError(t *testing.T) {
+	tempConfigDir(t)
+
+	path, err := configPath()
+	if err != nil {
+		t.Fatalf("configPath: %v", err)
+	}
+	// Pre-create config.json as a DIRECTORY so MkdirAll succeeds (the parent dir
+	// already exists) but WriteFile to that path fails.
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("setup mkdir config.json-as-dir: %v", err)
+	}
+
+	if err := saveConfig(config{Palette: "Dracula"}); err == nil {
+		t.Error("saveConfig should return an error when the config file path is a directory")
+	}
+}
+
 // A missing config file falls back to the default palette without error.
 func TestLoadPaletteMissingFallsBack(t *testing.T) {
 	tempConfigDir(t)

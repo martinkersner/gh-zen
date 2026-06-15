@@ -6,6 +6,9 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 // openDetailWithBody returns a model with a single issue's detail view open at
@@ -218,5 +221,56 @@ func TestDetailSearchHighlightActiveAndOtherSameLine(t *testing.T) {
 	}
 	if !strings.Contains(content, otherSeq) {
 		t.Errorf("non-active match style not present in rendered content")
+	}
+}
+
+// highlightStyledLine maps match columns in RUNE units onto a (possibly
+// ANSI-bearing) line. With multibyte runes a byte-based column walk would style
+// the wrong characters, so assert that a match on a multibyte rune (and runes
+// after it) is styled correctly and all rune text survives. Also covers a line
+// carrying a pre-existing ANSI escape (width-0 sequence passed through verbatim
+// without consuming a visible column).
+func TestHighlightStyledLineMultibyte(t *testing.T) {
+	// Force a real color profile so the match styles emit ANSI escapes; otherwise
+	// Style.Render is a no-op and the styled-vs-plain assertions are vacuous.
+	prevProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prevProfile)
+
+	applyPalette(defaultPalette)
+	t.Cleanup(func() { applyPalette(defaultPalette) })
+
+	// Plain line "héllo": rune columns 0=h 1=é 2=l 3=l 4=o. Mark the active match
+	// on the multibyte 'é' (col 1) and another match on 'o' (col 4).
+	active := map[int]bool{1: true}
+	other := map[int]bool{4: true}
+	out := highlightStyledLine("héllo", active, other)
+
+	// All five runes must survive intact in reading order.
+	if got := ansi.Strip(out); got != "héllo" {
+		t.Errorf("highlightStyledLine corrupted text: got %q, want %q", got, "héllo")
+	}
+	// The multibyte 'é' must carry the active style; 'o' the non-active style.
+	if !strings.Contains(out, detailActiveMatchStyle.Render("é")) {
+		t.Errorf("multibyte active rune not styled with active style: %q", out)
+	}
+	if !strings.Contains(out, detailMatchStyle.Render("o")) {
+		t.Errorf("non-active rune not styled with match style: %q", out)
+	}
+
+	// A line that already contains an ANSI escape: the escape is a width-0
+	// sequence and must not consume a visible column, so the column mapping stays
+	// aligned with the plain text. Here col 0 is the active match on the first
+	// visible rune after the leading escape.
+	styledIn := "\x1b[1mAB\x1b[0m"
+	out2 := highlightStyledLine(styledIn, map[int]bool{0: true}, nil)
+	if got := ansi.Strip(out2); got != "AB" {
+		t.Errorf("ANSI-bearing line text changed: got %q, want %q", got, "AB")
+	}
+	if !strings.Contains(out2, detailActiveMatchStyle.Render("A")) {
+		t.Errorf("first visible rune (after escape) not active-styled: %q", out2)
+	}
+	if strings.Contains(out2, detailActiveMatchStyle.Render("B")) {
+		t.Errorf("second rune wrongly active-styled (column drifted): %q", out2)
 	}
 }

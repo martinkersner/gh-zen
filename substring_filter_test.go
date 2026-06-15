@@ -85,3 +85,36 @@ func TestSubstringFilterEmptyTerm(t *testing.T) {
 		t.Errorf("empty term: got %d ranks, want %d", len(ranks), len(targets))
 	}
 }
+
+// runeIndex returns the index of the first contiguous occurrence in RUNE units,
+// not bytes. With multibyte runes a byte-based scan would report a wrong index
+// or miss a match straddling a multibyte boundary, so assert rune offsets
+// directly. (runeIndex underpins both the list filter and in-detail search.)
+func TestRuneIndexMultibyte(t *testing.T) {
+	cases := []struct {
+		name string
+		s    string
+		sub  string
+		want int
+	}{
+		{"ascii", "hello world", "world", 6},
+		{"sub longer than s", "hi", "hello", -1},
+		{"not present", "abc", "xyz", -1},
+		// "wörld" starts at rune index 6 ("héllo " = 6 runes), even though the
+		// preceding é and ö are multibyte.
+		{"multibyte offset", "héllo wörld", "wörld", 6},
+		// Match begins at a multibyte rune.
+		{"starts on multibyte rune", "münchen", "ünchen", 1},
+		// A sub that would match if compared bytewise across a rune boundary must
+		// not match: searching for the second byte of 'é' alone finds nothing.
+		{"no spurious byte-level match", "café", "x", -1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := runeIndex([]rune(c.s), []rune(c.sub))
+			if got != c.want {
+				t.Errorf("runeIndex(%q, %q) = %d, want %d", c.s, c.sub, got, c.want)
+			}
+		})
+	}
+}

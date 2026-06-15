@@ -197,6 +197,39 @@ func TestStatusBarShowsFilterQuery(t *testing.T) {
 	}
 }
 
+// Once a filter is applied (browsing the filtered results, not mid-typing) the
+// bar still surfaces the query via the FilterApplied branch — distinct from the
+// Filtering (typing) branch every other filter test exercises. An applied empty
+// query renders nothing on the left (searchBarLeft non-typing).
+func TestStatusBarShowsAppliedFilterQuery(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{
+		issues: []list.Item{
+			item{number: 1, title: "alpha", type_: "issue"},
+			item{number: 2, title: "beta", type_: "issue"},
+		},
+	})
+
+	// Drive the list into FilterApplied (not Filtering): SetFilterText computes
+	// the filtered set synchronously and leaves the list applied, mirroring what
+	// the user sees after typing a query and pressing enter.
+	mm := tm.(model)
+	mm.issueList.SetFilterText("alpha")
+	if mm.issueList.FilterState() != list.FilterApplied {
+		t.Fatalf("setup: want FilterApplied, got %v", mm.issueList.FilterState())
+	}
+
+	bar := mm.renderStatusBar()
+	if !strings.Contains(bar, "/alpha") {
+		t.Errorf("applied-filter bar missing the query: %q", bar)
+	}
+	if strings.Contains(bar, "filter:") {
+		t.Errorf("applied-filter bar should not show 'filter:' prefix: %q", bar)
+	}
+}
+
 // While a fetch is in flight the status bar surfaces a loading indicator that
 // clears once data arrives — covering the list view's initial load/refresh,
 // where the body may already be populated.

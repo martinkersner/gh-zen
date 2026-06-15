@@ -175,6 +175,43 @@ func TestRenderMarkdownMemoizesPerBodyWidth(t *testing.T) {
 	mdRenderMu.Unlock()
 }
 
+// renderMarkdown must never blank a non-empty body and must tolerate a sub-1
+// width (clamped to 1 in markdownRenderer) without panicking. The "falls back to
+// the raw body" contract means a non-empty input always yields non-empty output.
+func TestRenderMarkdownNeverBlanksAndClampsWidth(t *testing.T) {
+	mdRenderMu.Lock()
+	mdRenderCacheOK = false
+	mdRenderMu.Unlock()
+
+	body := "# Heading\n\nbody text with a word."
+	for _, w := range []int{0, -5, 1} {
+		out := renderMarkdown(body, w)
+		if strings.TrimSpace(ansi.Strip(out)) == "" {
+			t.Errorf("renderMarkdown(body, %d) blanked a non-empty body: %q", w, out)
+		}
+	}
+
+	// markdownRenderer itself clamps width < 1 to 1 and still returns a renderer
+	// (not nil), so the body renders rather than falling through to raw text.
+	if r := markdownRenderer(0); r == nil {
+		t.Error("markdownRenderer(0) returned nil; width clamp not applied")
+	}
+	if r := markdownRenderer(-3); r == nil {
+		t.Error("markdownRenderer(-3) returned nil; width clamp not applied")
+	}
+
+	// renderMarkdownUncached returns the raw body verbatim when there's no
+	// renderer — the "never goes blank" fallback. We can't force a nil renderer
+	// without a construction failure, but an empty body still round-trips to empty
+	// without panicking, and a plain body survives rendering intact.
+	if got := renderMarkdownUncached("", 80); got != "" {
+		t.Errorf("renderMarkdownUncached(\"\") = %q, want empty", got)
+	}
+	if got := ansi.Strip(renderMarkdownUncached("plain words", 80)); !strings.Contains(got, "plain words") {
+		t.Errorf("renderMarkdownUncached dropped body text: %q", got)
+	}
+}
+
 // An empty body and the loading placeholder are not run through markdown
 // rendering and render sanely (no panic, expected text present).
 func TestDetailEmptyAndLoadingBody(t *testing.T) {

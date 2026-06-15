@@ -200,3 +200,43 @@ func TestHelpOverlayDiffViewKeys(t *testing.T) {
 		}
 	}
 }
+
+// Resizing the terminal while the diff sub-view is open must re-run the diff-view
+// branch of resizeDetailViewport: the viewport is re-dimensioned AND the
+// per-file header offsets are recomputed for the new width (diff layout, and thus
+// offsets, are width-dependent). Without that branch the offsets go stale and
+// file navigation would scroll to wrong rows after a resize. (detail.go diff
+// branch in resizeDetailViewport.)
+func TestResizeInDiffViewRecomputesOffsets(t *testing.T) {
+	tm := openDiffView(t, 120, 40)
+	mm := tm.(model)
+	if !mm.detailShowDiff {
+		t.Fatal("setup: not in diff view")
+	}
+	wideOffsets := append([]int(nil), mm.detailFileOffsets...)
+	if len(wideOffsets) != len(mm.detailFiles) {
+		t.Fatalf("setup: offsets=%d files=%d", len(wideOffsets), len(mm.detailFiles))
+	}
+
+	// Resize narrower: the unified layout wraps long lines differently, so the
+	// per-file offsets shift. The viewport width must follow the new terminal too.
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 50, Height: 20})
+	mm = tm.(model)
+
+	if len(mm.detailFileOffsets) != len(mm.detailFiles) {
+		t.Errorf("offsets not recomputed after resize: got %d, want %d", len(mm.detailFileOffsets), len(mm.detailFiles))
+	}
+	wantW, _ := detailViewportSize(50, 20, 1)
+	if mm.detailViewport.Width != wantW {
+		t.Errorf("viewport width not resized: got %d, want %d", mm.detailViewport.Width, wantW)
+	}
+	// File navigation must still land on a valid offset (no stale index past the
+	// re-rendered content); jumping to the last file should not panic and should
+	// move the active-file cursor.
+	tm = press(tm, "]")
+	tm = press(tm, "]")
+	tm = press(tm, "]")
+	if got := tm.(model).detailActiveFile; got != len(mm.detailFiles)-1 {
+		t.Errorf("after resize, ] navigation active file = %d, want %d", got, len(mm.detailFiles)-1)
+	}
+}

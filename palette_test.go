@@ -130,6 +130,21 @@ func TestApplyPaletteRebuildsStyles(t *testing.T) {
 	}
 }
 
+// activePaletteName falls back to the default palette's name when the live
+// globals don't match any registered palette (e.g. colors set outside the
+// registry). This exercises the registry-miss branch the other tests skip by
+// only ever applying registered palettes.
+func TestActivePaletteNameRegistryMissFallsBack(t *testing.T) {
+	t.Cleanup(func() { applyPalette(defaultPalette) })
+
+	// Set the accent to a value no registered palette uses, leaving the globals
+	// in a state that matches no palette in the registry.
+	accentColor = lipgloss.AdaptiveColor{Light: "#010203", Dark: "#040506"}
+	if got := activePaletteName(); got != defaultPalette.Name {
+		t.Errorf("activePaletteName() with unregistered globals = %q, want default %q", got, defaultPalette.Name)
+	}
+}
+
 func TestPaletteByNameAndIndex(t *testing.T) {
 	if p, ok := paletteByName("Dracula"); !ok || p.Name != "Dracula" {
 		t.Errorf("paletteByName(Dracula) = %v, %v", p, ok)
