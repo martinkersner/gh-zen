@@ -138,8 +138,12 @@ func TestActivePaletteNameRegistryMissFallsBack(t *testing.T) {
 	t.Cleanup(func() { applyPalette(defaultPalette) })
 
 	// Set the accent to a value no registered palette uses, leaving the globals
-	// in a state that matches no palette in the registry.
+	// in a state that matches no palette in the registry. Guard the write with
+	// paletteMu, honoring the same contract production writers (applyPalette) use,
+	// so the assignment stays race-free even if a future test parallelizes.
+	paletteMu.Lock()
 	accentColor = lipgloss.AdaptiveColor{Light: "#010203", Dark: "#040506"}
+	paletteMu.Unlock()
 	if got := activePaletteName(); got != defaultPalette.Name {
 		t.Errorf("activePaletteName() with unregistered globals = %q, want default %q", got, defaultPalette.Name)
 	}

@@ -90,8 +90,9 @@ func renderMarkdown(body string, width int) string {
 // renders that miss the memoization in renderMarkdown. It exists so a test can
 // assert a repeat (body, width) is a true cache hit (no extra render) rather than
 // merely producing identical output (which a deterministic renderer does even
-// with the cache removed). Only touched on this path; benign to read concurrently
-// in single-goroutine tests.
+// with the cache removed). It is a plain (unsynchronized, non-atomic) int: safe
+// only because the tests that read it run serially on one goroutine — it is NOT
+// concurrent-safe and must not be relied on outside that serial-test context.
 var mdUncachedRenders int
 
 // renderMarkdownUncached performs the actual glamour render (no memoization).
