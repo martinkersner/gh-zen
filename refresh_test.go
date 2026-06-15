@@ -98,8 +98,21 @@ func TestTickReArmsTicker(t *testing.T) {
 }
 
 // While the filter input is active, a tick still re-arms the ticker but must not
-// reshuffle the list under the user.
+// dispatch the data fetch (which would reshuffle the list under the user). This
+// asserts the actual skip — that fetchIssuesAndPRs is NOT invoked — rather than
+// just that the ticker re-armed: deleting the `!m.currentList().SettingFilter()`
+// guard in the tickMsg handler must make this test fail.
 func TestTickSkipsRefreshWhileFiltering(t *testing.T) {
+	// Stub the data fetch so a dispatched refresh is observable (and never hits
+	// the network). The counter records whether the tick dispatched it.
+	fetches := 0
+	orig := fetchIssuesAndPRs
+	fetchIssuesAndPRs = func() tea.Cmd {
+		fetches++
+		return func() tea.Msg { return dataMsg{} }
+	}
+	t.Cleanup(func() { fetchIssuesAndPRs = orig })
+
 	m := newModel()
 	var tm tea.Model = m
 	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -111,9 +124,27 @@ func TestTickSkipsRefreshWhileFiltering(t *testing.T) {
 		t.Fatal("setup: expected to be in filter input")
 	}
 
+	// A tick while filtering: the ticker must still re-arm, but the data fetch
+	// must be skipped so the visible filtered list isn't reshuffled.
+	before := fetches
 	tm, cmd := tm.Update(tickMsg{})
 	if cmd == nil {
 		t.Error("tick returned nil cmd while filtering; ticker not re-armed")
+	}
+	if fetches != before {
+		t.Errorf("tick dispatched a data fetch while filtering (count %d -> %d); refresh not skipped", before, fetches)
+	}
+
+	// Sanity: once the filter is cancelled a tick DOES dispatch the fetch, so the
+	// skip above is specific to the filtering state (not a dead fetch seam).
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if tm.(model).issueList.SettingFilter() {
+		t.Fatal("setup: filter not cancelled by esc")
+	}
+	before = fetches
+	tm, _ = tm.Update(tickMsg{})
+	if fetches != before+1 {
+		t.Errorf("tick did not dispatch a data fetch when not filtering (count %d -> %d)", before, fetches)
 	}
 }
 
@@ -124,9 +155,15 @@ func TestRKeyTriggersListRefresh(t *testing.T) {
 	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	tm, _ = tm.Update(dataMsg{issues: mkItems(2, "issue")})
 
-	_, cmd := tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	tm, cmd := tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	if cmd == nil {
 		t.Error("r in list view returned nil cmd; no refresh dispatched")
+	}
+	// A user-triggered refresh must raise the loading flag so the status-bar
+	// indicator reflects the in-flight fetch (cmd != nil alone is satisfied by
+	// the list's own pass-through cmd even if no refresh ran).
+	if !tm.(model).loading {
+		t.Error("r in list view did not set loading=true")
 	}
 }
 

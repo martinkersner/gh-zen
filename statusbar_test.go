@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 )
 
@@ -140,17 +141,31 @@ func TestStatusBarDetailSearchParity(t *testing.T) {
 	}
 }
 
-// On a narrow terminal the bar must stay a single row (no wrap) so it doesn't
-// overflow the one reserved status-bar line.
+// On a narrow terminal where the two halves don't fit (gap < 1) the bar must
+// take the ansi.Truncate path: stay a single row (no wrap) AND fit within the
+// terminal width, so it never overflows the one reserved status-bar line. The
+// previous version sat at width 20 with loading cleared, where gap = 14 takes
+// the padding branch and never exercises the truncate path it claims to guard.
+// Here the loading indicator on the left makes the two halves overflow width 8,
+// forcing gap < 1.
 func TestStatusBarFitsNarrowWidth(t *testing.T) {
 	m := newModel()
 	var tm tea.Model = m
-	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 20, Height: 24})
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 8, Height: 24})
 	tm, _ = tm.Update(dataMsg{issues: []list.Item{item{number: 1, title: "a", type_: "issue"}}})
 
-	bar := tm.(model).renderStatusBar()
+	// Mark a fetch in flight so the loading indicator widens the left side and the
+	// left+hints exceed the width (gap < 1), taking the truncate branch.
+	mm := tm.(model)
+	mm.loading = true
+	bar := mm.renderStatusBar()
 	if strings.Contains(bar, "\n") {
 		t.Errorf("status bar wrapped onto multiple rows: %q", bar)
+	}
+	// The truncate branch clamps to the terminal width; the padding branch would
+	// leave the (already-overflowing) left+hints untouched and overflow it.
+	if w := lipgloss.Width(bar); w > mm.width {
+		t.Errorf("status bar width %d exceeds terminal width %d (truncate branch not taken): %q", w, mm.width, bar)
 	}
 }
 
@@ -179,6 +194,39 @@ func TestStatusBarShowsFilterQuery(t *testing.T) {
 	}
 	if strings.Contains(bar, "Issues") {
 		t.Errorf("status bar should not show mode label in filter display: %q", bar)
+	}
+}
+
+// Once a filter is applied (browsing the filtered results, not mid-typing) the
+// bar still surfaces the query via the FilterApplied branch — distinct from the
+// Filtering (typing) branch every other filter test exercises. An applied empty
+// query renders nothing on the left (searchBarLeft non-typing).
+func TestStatusBarShowsAppliedFilterQuery(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{
+		issues: []list.Item{
+			item{number: 1, title: "alpha", type_: "issue"},
+			item{number: 2, title: "beta", type_: "issue"},
+		},
+	})
+
+	// Drive the list into FilterApplied (not Filtering): SetFilterText computes
+	// the filtered set synchronously and leaves the list applied, mirroring what
+	// the user sees after typing a query and pressing enter.
+	mm := tm.(model)
+	mm.issueList.SetFilterText("alpha")
+	if mm.issueList.FilterState() != list.FilterApplied {
+		t.Fatalf("setup: want FilterApplied, got %v", mm.issueList.FilterState())
+	}
+
+	bar := mm.renderStatusBar()
+	if !strings.Contains(bar, "/alpha") {
+		t.Errorf("applied-filter bar missing the query: %q", bar)
+	}
+	if strings.Contains(bar, "filter:") {
+		t.Errorf("applied-filter bar should not show 'filter:' prefix: %q", bar)
 	}
 }
 
@@ -330,14 +378,23 @@ func TestStatusBarShowsLoadingIndicatorForDetail(t *testing.T) {
 	}
 }
 
-// The loading indicator is the bare word "loading" (with ellipsis) and carries
-// no leading glyph, so it reads as a quiet status rather than a spinner.
+// The loading indicator the status bar actually renders while a fetch is in
+// flight is the bare word "loading" (with ellipsis) and carries no leading
+// spinner glyph, so it reads as a quiet status. Asserting against the rendered
+// bar (not just the const literal) makes this catch a regression that swaps the
+// indicator in for a glyphed one or drops the word.
 func TestLoadingIndicatorHasNoGlyph(t *testing.T) {
-	if !strings.Contains(loadingIndicator, "loading") {
-		t.Errorf("loadingIndicator should contain the word 'loading': %q", loadingIndicator)
+	m := newModel() // newModel starts loading=true
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	bar := ansi.Strip(tm.(model).renderStatusBar())
+	if !strings.Contains(bar, "loading") {
+		t.Errorf("status bar loading indicator should contain the word 'loading': %q", bar)
 	}
-	if strings.ContainsRune(loadingIndicator, '⟳') {
-		t.Errorf("loadingIndicator should not contain the ⟳ glyph: %q", loadingIndicator)
+	for _, glyph := range []rune{'⟳', '⠋', '◐', '▰'} {
+		if strings.ContainsRune(bar, glyph) {
+			t.Errorf("status bar loading indicator should not contain a spinner glyph %q: %q", glyph, bar)
+		}
 	}
 }
 

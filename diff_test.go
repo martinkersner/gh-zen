@@ -231,8 +231,10 @@ func TestDiffLoadingLeavesViewBlank(t *testing.T) {
 	if !mm.detailDiffLoading {
 		t.Fatal("setup: expected detailDiffLoading while fetching")
 	}
-	if got := mm.detailDiffContent(); strings.Contains(got, "Loading diff") {
-		t.Errorf("loading diff should not render an in-view placeholder, got %q", got)
+	// The view must be left genuinely blank while loading — not merely free of the
+	// literal "Loading diff" string. Asserting empty catches any placeholder text.
+	if got := mm.detailDiffContent(); got != "" {
+		t.Errorf("loading diff should leave the view blank, got %q", got)
 	}
 	if !strings.Contains(mm.renderStatusBar(), loadingDiffIndicator) {
 		t.Errorf("status bar should show the diff loading label, got %q", mm.renderStatusBar())

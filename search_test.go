@@ -90,6 +90,25 @@ func TestFindMatches(t *testing.T) {
 			query: "apa",
 			want:  nil,
 		},
+		{
+			// Multibyte: offsets must be in RUNES, not bytes. "héllo" (the é is two
+			// bytes) appears at rune cols 0 and 12; a byte-offset regression would
+			// report the wrong startCol here.
+			name:  "multibyte rune offsets",
+			lines: []string{"héllo wörld héllo"},
+			query: "héllo",
+			want: []searchMatch{
+				{line: 0, startCol: 0, length: 5},
+				{line: 0, startCol: 12, length: 5},
+			},
+		},
+		{
+			// Case-insensitive match over multibyte runes.
+			name:  "multibyte case insensitive",
+			lines: []string{"CAFÉ münchen"},
+			query: "café",
+			want:  []searchMatch{{line: 0, startCol: 0, length: 4}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -143,6 +162,11 @@ func TestScrollOffsetFor(t *testing.T) {
 		{"at top edge visible", 0, 0, 10, 100, 0},
 		{"at bottom edge visible", 9, 0, 10, 100, 0},
 		{"just past bottom edge", 10, 0, 10, 100, 1},
+		// viewportHeight < 1 is clamped to 1 (guard): a degenerate/zero-height
+		// viewport must not divide the window away. With height treated as 1, line
+		// 5 sits below the 1-row window so it scrolls so the line is last: 5-1+1=5.
+		{"zero viewport height clamps to 1", 5, 0, 0, 100, 5},
+		{"negative viewport height clamps to 1", 3, 0, -4, 100, 3},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

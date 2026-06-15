@@ -379,3 +379,84 @@ func TestRenderSideBySideWrapsWithinColumns(t *testing.T) {
 		t.Errorf("right column dropped wrapped addition (col=%d): %q", col, rightCol.String())
 	}
 }
+
+// pairHunkLines pairs a run of deletions against the following run of additions
+// (line i vs line i); leftover lines in the longer run get a blank opposite
+// cell. The side-by-side test above only checks the first pair, so assert the
+// leftover-run behavior directly on the pure function: a del-heavy run leaves a
+// nil right cell, an add-heavy run leaves a nil left cell, and context lines
+// occupy both sides.
+func TestPairHunkLinesLeftoverRuns(t *testing.T) {
+	// del-heavy: 3 dels, 1 add. Row 0 pairs (del0|add0); rows 1,2 are leftover
+	// dels with a blank (nil) right cell.
+	delHeavy := []diffLine{
+		{kind: lineDel, text: "d0"},
+		{kind: lineDel, text: "d1"},
+		{kind: lineDel, text: "d2"},
+		{kind: lineAdd, text: "a0"},
+	}
+	rows := pairHunkLines(delHeavy)
+	if len(rows) != 3 {
+		t.Fatalf("del-heavy: got %d rows, want 3", len(rows))
+	}
+	if rows[0].left == nil || rows[0].right == nil {
+		t.Errorf("del-heavy row 0 should pair del|add, got %+v", rows[0])
+	}
+	if rows[0].left.text != "d0" || rows[0].right.text != "a0" {
+		t.Errorf("del-heavy row 0 = %q|%q, want d0|a0", rows[0].left.text, rows[0].right.text)
+	}
+	for i := 1; i <= 2; i++ {
+		if rows[i].left == nil {
+			t.Errorf("del-heavy row %d should have a left (del) cell", i)
+		}
+		if rows[i].right != nil {
+			t.Errorf("del-heavy row %d should have a blank (nil) right cell, got %q", i, rows[i].right.text)
+		}
+	}
+
+	// add-heavy: 1 del, 3 adds. Row 0 pairs; rows 1,2 are leftover adds with a
+	// blank (nil) left cell.
+	addHeavy := []diffLine{
+		{kind: lineDel, text: "d0"},
+		{kind: lineAdd, text: "a0"},
+		{kind: lineAdd, text: "a1"},
+		{kind: lineAdd, text: "a2"},
+	}
+	rows = pairHunkLines(addHeavy)
+	if len(rows) != 3 {
+		t.Fatalf("add-heavy: got %d rows, want 3", len(rows))
+	}
+	if rows[0].left == nil || rows[0].right == nil {
+		t.Errorf("add-heavy row 0 should pair del|add, got %+v", rows[0])
+	}
+	for i := 1; i <= 2; i++ {
+		if rows[i].left != nil {
+			t.Errorf("add-heavy row %d should have a blank (nil) left cell, got %q", i, rows[i].left.text)
+		}
+		if rows[i].right == nil {
+			t.Errorf("add-heavy row %d should have a right (add) cell", i)
+		}
+	}
+
+	// pure dels (no following adds): every row has a left cell, blank right.
+	pureDel := []diffLine{{kind: lineDel, text: "x"}, {kind: lineDel, text: "y"}}
+	rows = pairHunkLines(pureDel)
+	if len(rows) != 2 {
+		t.Fatalf("pure-del: got %d rows, want 2", len(rows))
+	}
+	for i, r := range rows {
+		if r.left == nil || r.right != nil {
+			t.Errorf("pure-del row %d should be del|blank, got %+v", i, r)
+		}
+	}
+
+	// context line occupies both columns (same pointer text on each side).
+	ctx := []diffLine{{kind: lineContext, text: "same"}}
+	rows = pairHunkLines(ctx)
+	if len(rows) != 1 || rows[0].left == nil || rows[0].right == nil {
+		t.Fatalf("context: want one row on both sides, got %+v", rows)
+	}
+	if rows[0].left.text != "same" || rows[0].right.text != "same" {
+		t.Errorf("context row = %q|%q, want same|same", rows[0].left.text, rows[0].right.text)
+	}
+}

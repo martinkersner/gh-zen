@@ -25,6 +25,12 @@ func TestNumberPrefixLen(t *testing.T) {
 		{"#42", 3},              // no space: whole string is the prefix
 		{"no prefix", 0},        // does not start with '#'
 		{"", 0},
+		// Rune-count, not byte-count: a multibyte rune before the space must not
+		// inflate the prefix length. "#é " is 3 runes (the é is 2 bytes), so the
+		// prefix length is 3, not the 4-byte length.
+		{"#é foo", 3},
+		// Multibyte in the title body past the space doesn't affect the prefix.
+		{"#7 café", 3},
 	}
 	for _, c := range cases {
 		if got := numberPrefixLen(c.title); got != c.want {
@@ -90,10 +96,21 @@ func TestRenderTitleMatchWinsInPrefix(t *testing.T) {
 
 	// Match the two digit runes (indexes 1 and 2) inside the prefix.
 	out := renderTitle(title, prefixLen, []int{1, 2}, true, s.NormalTitle, s.FilterMatch, number)
-	// FilterMatch sets underline (SGR 4); it must be present for the matched
-	// digits even though they fall inside the number prefix.
-	if !strings.Contains(out, "\x1b[") || !strings.Contains(out, "4m") {
-		t.Errorf("filter-match underline missing on matched prefix runes: %q", out)
+	// FilterMatch sets underline (SGR 4); the matched digits must carry the
+	// underline introducer even though they fall inside the number prefix. lipgloss
+	// folds the underline in as the leading SGR parameter (e.g. "\x1b[4;38;2;...m"),
+	// so we assert that exact "\x1b[4;"/"\x1b[4m" underline form rather than the
+	// prior bare "4m" — which any SGR ending in 4 (34m/44m, i.e. foreground/
+	// background, not underline) would also satisfy.
+	if !strings.Contains(out, "\x1b[4;") && !strings.Contains(out, "\x1b[4m") {
+		t.Errorf("filter-match underline (SGR 4) missing on matched prefix runes: %q", out)
+	}
+	// Belt-and-suspenders: the unfiltered render of the same title must NOT carry
+	// the underline, so the assertion above is the match decoration, not noise.
+	plainNumber := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Inline(true)
+	noMatch := renderTitle(title, prefixLen, nil, false, s.NormalTitle, s.FilterMatch, plainNumber)
+	if strings.Contains(noMatch, "\x1b[4;") || strings.Contains(noMatch, "\x1b[4m") {
+		t.Errorf("unfiltered title unexpectedly carries underline SGR: %q", noMatch)
 	}
 	if got := stripANSI(out); !strings.Contains(got, "#12 hi") {
 		t.Errorf("plain text not intact under filtering: %q", got)
@@ -109,6 +126,19 @@ func TestFilterValuePlain(t *testing.T) {
 	}
 	if strings.ContainsRune(it.FilterValue(), '\x1b') {
 		t.Errorf("FilterValue() must not contain ANSI: %q", it.FilterValue())
+	}
+}
+
+// item rows are single-line: Title carries the "#<number> title" text and
+// Description is intentionally empty (the delegate renders one line). Asserts the
+// empty Description contract so a delegate change that starts reading it is caught.
+func TestItemTitleAndDescription(t *testing.T) {
+	it := item{number: 7, title: "fix thing", type_: "issue"}
+	if got := it.Title(); got != "#7 fix thing" {
+		t.Errorf("Title() = %q, want %q", got, "#7 fix thing")
+	}
+	if got := it.Description(); got != "" {
+		t.Errorf("Description() = %q, want empty", got)
 	}
 }
 
