@@ -86,8 +86,17 @@ func renderMarkdown(body string, width int) string {
 	return out
 }
 
+// mdUncachedRenders counts calls to renderMarkdownUncached — i.e. actual glamour
+// renders that miss the memoization in renderMarkdown. It exists so a test can
+// assert a repeat (body, width) is a true cache hit (no extra render) rather than
+// merely producing identical output (which a deterministic renderer does even
+// with the cache removed). Only touched on this path; benign to read concurrently
+// in single-goroutine tests.
+var mdUncachedRenders int
+
 // renderMarkdownUncached performs the actual glamour render (no memoization).
 func renderMarkdownUncached(body string, width int) string {
+	mdUncachedRenders++
 	r := markdownRenderer(width)
 	if r == nil {
 		return body

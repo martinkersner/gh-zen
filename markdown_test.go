@@ -76,11 +76,19 @@ func TestDetailSearchAlignsOnMarkdown(t *testing.T) {
 		}
 	}
 
-	// The rendered (styled) content must still contain the active-match styling
-	// and keep the matched word's letters intact.
+	// The active match (index 0) must carry the active style while the OTHER match
+	// (index 1) carries the non-active style — not merely "some rune is active-
+	// styled somewhere". Verifying both distinguishes the active match from the
+	// rest, which the prior single-rune check did not.
+	if mm.detailActiveMatch != 0 {
+		t.Fatalf("active match = %d, want 0 (first hit)", mm.detailActiveMatch)
+	}
 	content := mm.detailBodyContent()
 	if !strings.Contains(content, detailActiveMatchStyle.Render("n")) {
-		t.Errorf("active match styling not present in rendered markdown content")
+		t.Errorf("active-match styling not present in rendered markdown content")
+	}
+	if !strings.Contains(content, detailMatchStyle.Render("n")) {
+		t.Errorf("non-active (other) match styling not present; the second match was not styled as a plain match")
 	}
 	if strings.Count(ansi.Strip(content), "needle") != 2 {
 		t.Errorf("rendered content lost a match after highlighting:\n%s", ansi.Strip(content))
@@ -99,8 +107,18 @@ func TestRenderMarkdownMemoizesPerBodyWidth(t *testing.T) {
 
 	body := "# Title\n\nsome *emphasis* and a needle word."
 
-	// First render populates the cache keyed by (body, 80).
+	// renders counts the underlying glamour renders since the last reset, so we
+	// can prove a cache hit performs ZERO additional renders (a deterministic
+	// renderer would return identical output even with caching removed, so output
+	// equality alone can't distinguish a hit from a re-render).
+	renders := func() int { return mdUncachedRenders }
+
+	// First render populates the cache keyed by (body, 80) and performs one render.
+	start := renders()
 	out1 := renderMarkdown(body, 80)
+	if got := renders() - start; got != 1 {
+		t.Fatalf("first render performed %d glamour renders, want 1", got)
+	}
 	mdRenderMu.Lock()
 	if !mdRenderCacheOK || mdRenderCacheBody != body || mdRenderCacheW != 80 {
 		mdRenderMu.Unlock()
@@ -108,40 +126,53 @@ func TestRenderMarkdownMemoizesPerBodyWidth(t *testing.T) {
 	}
 	mdRenderMu.Unlock()
 
-	// Repeat call with the same (body, width) is a hit and returns identical output.
-	if out2 := renderMarkdown(body, 80); out2 != out1 {
+	// Repeat call with the same (body, width) is a HIT: identical output AND no
+	// additional glamour render. This is the assertion that actually fails if the
+	// memoization is removed.
+	before := renders()
+	out2 := renderMarkdown(body, 80)
+	if out2 != out1 {
 		t.Errorf("repeat render differs from first:\nfirst:  %q\nsecond: %q", out1, out2)
 	}
-
-	// The memoized output must equal a fresh uncached render.
-	if want := renderMarkdownUncached(body, 80); out1 != want {
-		t.Errorf("cached output != uncached render:\ncached:   %q\nuncached: %q", out1, want)
+	if got := renders() - before; got != 0 {
+		t.Errorf("repeat (body, 80) render performed %d glamour renders, want 0 (cache miss)", got)
 	}
 
-	// A width change evicts the entry (new key) and re-renders.
-	out80w := renderMarkdown(body, 40)
+	// A width change evicts the entry (new key) and performs a fresh render.
+	before = renders()
+	renderMarkdown(body, 40)
+	if got := renders() - before; got != 1 {
+		t.Errorf("width change performed %d glamour renders, want 1 (eviction)", got)
+	}
 	mdRenderMu.Lock()
 	if mdRenderCacheW != 40 || mdRenderCacheBody != body {
 		mdRenderMu.Unlock()
 		t.Fatalf("cache not re-keyed on width change: body=%q w=%d", mdRenderCacheBody, mdRenderCacheW)
 	}
 	mdRenderMu.Unlock()
-	if want := renderMarkdownUncached(body, 40); out80w != want {
-		t.Errorf("width-changed render != uncached:\ngot:  %q\nwant: %q", out80w, want)
+	// The previous (body, 80) entry is now evicted, so re-requesting it renders again
+	// (a single-entry cache, not stale).
+	before = renders()
+	if got := renderMarkdown(body, 80); got != out1 {
+		t.Errorf("re-render of evicted (body, 80) differs: %q vs %q", got, out1)
+	}
+	if got := renders() - before; got != 1 {
+		t.Errorf("evicted (body, 80) re-request performed %d renders, want 1", got)
 	}
 
 	// A body change (e.g. switching to a different issue/PR) evicts the entry too.
 	other := "# Other\n\ndifferent body entirely."
-	outOther := renderMarkdown(other, 40)
+	before = renders()
+	renderMarkdown(other, 80)
+	if got := renders() - before; got != 1 {
+		t.Errorf("body change performed %d glamour renders, want 1 (eviction)", got)
+	}
 	mdRenderMu.Lock()
-	if mdRenderCacheBody != other || mdRenderCacheW != 40 {
+	if mdRenderCacheBody != other || mdRenderCacheW != 80 {
 		mdRenderMu.Unlock()
 		t.Fatalf("cache not re-keyed on body change: body=%q w=%d", mdRenderCacheBody, mdRenderCacheW)
 	}
 	mdRenderMu.Unlock()
-	if want := renderMarkdownUncached(other, 40); outOther != want {
-		t.Errorf("body-changed render != uncached:\ngot:  %q\nwant: %q", outOther, want)
-	}
 }
 
 // An empty body and the loading placeholder are not run through markdown
