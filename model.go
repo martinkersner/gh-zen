@@ -630,11 +630,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateListSize() {
-	// Reserve the tabs row above the list plus the status bar row pinned to the
-	// bottom, so neither overlaps the scrollable list. The list now renders
-	// directly under the tabs (no blank line), so only one row of chrome sits
-	// above it.
-	listHeight := m.height - 1 - statusBarHeight
+	// Reserve the chrome above the list plus the status bar row pinned to the
+	// bottom, so neither overlaps the scrollable list. Above the list sit two
+	// rows: the tabs row and a blank separator line (see renderList); keep this
+	// reserved count in sync with that render or the bottom item collides with
+	// the status bar.
+	listHeight := m.height - 2 - statusBarHeight
 	m.issueList.SetSize(m.width, listHeight)
 	m.prList.SetSize(m.width, listHeight)
 }

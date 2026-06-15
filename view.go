@@ -42,8 +42,10 @@ func (m model) View() string {
 func (m model) renderList() string {
 	var b string
 
-	// Tabs
-	b += m.renderTabs() + "\n"
+	// Tabs, followed by a blank line that separates navigation from content. The
+	// list reserves two rows above it for this (see updateListSize); keep the two
+	// in sync or the bottom item collides with the status bar.
+	b += m.renderTabs() + "\n\n"
 
 	// Errors still take over the body. Loading is surfaced solely by the
 	// status-bar indicator (see renderStatusBar) and the tab "(?)" counts, so
