@@ -9,7 +9,7 @@ import (
 )
 
 // A long title must truncate at the same visible column whether or not the row
-// is selected. SelectedTitle and NormalTitle have different padding (1 vs 2) but
+// is selected. SelectedTitle and NormalTitle have different padding (0 vs 1) but
 // SelectedTitle adds a 1-col left border, so both have the same horizontal frame
 // size; deriving textwidth per-row-style keeps the truncated text identical.
 // Regression test for issue #72.

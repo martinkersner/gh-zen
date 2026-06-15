@@ -39,8 +39,17 @@ type itemDelegate struct {
 }
 
 func newItemDelegate() itemDelegate {
+	s := list.NewDefaultItemStyles()
+	// Shrink the left gutter by 1 column so the whole app sits at column 1
+	// instead of column 2. NormalTitle/DimmedTitle pad 1 (no border); the
+	// SelectedTitle keeps its 1-col left border but pads 0, so the border lives
+	// in column 0 and normal rows blank-pad column 0 — same horizontal frame
+	// size (1), so moving the cursor causes no horizontal shift (see issue #122).
+	s.NormalTitle = s.NormalTitle.PaddingLeft(1)
+	s.DimmedTitle = s.DimmedTitle.PaddingLeft(1)
+	s.SelectedTitle = s.SelectedTitle.PaddingLeft(0)
 	return itemDelegate{
-		styles: list.NewDefaultItemStyles(),
+		styles: s,
 	}
 }
 
@@ -136,8 +145,8 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	isFiltered := m.FilterState() == list.Filtering || m.FilterState() == list.FilterApplied
 
 	// Pick the row style first so the available text width is derived from that
-	// style's own horizontal frame (padding + border). SelectedTitle pads 1 but
-	// adds a 1-col left border, while NormalTitle pads 2 with no border; using
+	// style's own horizontal frame (padding + border). SelectedTitle pads 0 but
+	// adds a 1-col left border, while NormalTitle pads 1 with no border; using
 	// each style's GetHorizontalFrameSize keeps long titles truncating at the
 	// same visible column regardless of selection.
 	rowStyle := s.NormalTitle

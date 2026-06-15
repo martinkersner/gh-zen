@@ -19,10 +19,10 @@ func (m model) renderTabs() string {
 		label := fmt.Sprintf("%s (%s)", t, m.tabCountLabel(tab(i)))
 		tabs = append(tabs, style.Render(label))
 	}
-	// Extra left pad of 1 so the first tab's text starts at column 2, aligning
-	// with the list items below (NormalTitle padding-left is 2; the tab style's
-	// own padding-left is only 1).
-	return lipgloss.NewStyle().PaddingLeft(1).Render(lipgloss.JoinHorizontal(lipgloss.Left, tabs...))
+	// The tab style's own padding-left of 1 already starts the first tab's text
+	// at column 1, aligning with the list items below (NormalTitle padding-left
+	// is 1). No extra left pad is needed.
+	return lipgloss.JoinHorizontal(lipgloss.Left, tabs...)
 }
 
 // tabCount returns the number of items fetched for the given tab.
