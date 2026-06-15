@@ -256,65 +256,10 @@ func TestE2EDetailDiffToggle(t *testing.T) {
 	quit(t, tm)
 }
 
-// ctrl+g goes back from an open detail view to the list, mirroring esc/q.
-func TestE2EDetailBackCtrlG(t *testing.T) {
-	tm := newSeededModel(t)
-	waitForList(t, tm)
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		return bytes.Contains(b, []byte("#11 first issue alpha")) &&
-			bytes.Contains(b, []byte("issue body line one"))
-	}, teatest.WithDuration(e2eWaitTimeout))
-	// ctrl+g returns to the list, just like esc does.
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlG})
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		return bytes.Contains(b, []byte("second issue beta"))
-	}, teatest.WithDuration(e2eWaitTimeout))
-	quit(t, tm)
-}
-
-// ctrl+g dismisses the help overlay, mirroring esc.
-func TestE2EHelpOverlayCtrlG(t *testing.T) {
-	tm := newSeededModel(t)
-	waitForList(t, tm)
-	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		return bytes.Contains(b, []byte("Keyboard shortcuts"))
-	}, teatest.WithDuration(e2eWaitTimeout))
-	// ctrl+g dismisses it, returning to the list.
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlG})
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		return bytes.Contains(b, []byte("first issue alpha"))
-	}, teatest.WithDuration(e2eWaitTimeout))
-	quit(t, tm)
-}
-
-// ctrl+g clears an active list filter, mirroring esc.
-func TestE2EFilterCancelCtrlG(t *testing.T) {
-	tm := newSeededModel(t)
-	waitForList(t, tm)
-	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
-	tm.Type("beta")
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		return bytes.Contains(b, []byte("second issue beta")) &&
-			!bytes.Contains(b, []byte("first issue alpha"))
-	}, teatest.WithDuration(e2eWaitTimeout))
-	// ctrl+g clears the filter; the filtered-out row reappears.
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlG})
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		return bytes.Contains(b, []byte("first issue alpha"))
-	}, teatest.WithDuration(e2eWaitTimeout))
-	quit(t, tm)
-}
-
-// ctrl+g quits from the list view, mirroring q. Sent as the only key so the
-// program shuts down; WaitFinished confirms the quit took effect.
-func TestE2EListQuitCtrlG(t *testing.T) {
-	tm := newSeededModel(t)
-	waitForList(t, tm)
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlG})
-	tm.WaitFinished(t, teatest.WithFinalTimeout(e2eFinalTimeout))
-}
+// The four ctrl+g behaviors (detail back / help dismiss / filter cancel / list
+// quit) are covered by the Update-level table test TestCtrlGBehaviors
+// (goto_nav_test.go) — one Update call per branch instead of four full teatest
+// programs — so they are not re-exercised here as separate e2e flows.
 
 // A WindowSizeMsg reflows the layout: after narrowing the terminal the list
 // still renders its rows (no panic, no blank frame), exercising the full

@@ -97,3 +97,76 @@ func TestHelpOverlayListsGotoShortcut(t *testing.T) {
 		t.Errorf("detail help overlay missing g/G shortcut: %q", view)
 	}
 }
+
+// ctrl+g is the universal "back/cancel/quit" key: it closes the detail view,
+// dismisses the help overlay, cancels an active filter, and quits from the list
+// — each one line of Update logic. This single Update-level table test replaces
+// four separate teatest e2e programs (one per case) that each spun up the full
+// render loop to exercise that one line, cutting suite time while still covering
+// every branch.
+func TestCtrlGBehaviors(t *testing.T) {
+	// quits reports whether running cmd yields a tea.QuitMsg.
+	quits := func(cmd tea.Cmd) bool {
+		if cmd == nil {
+			return false
+		}
+		_, ok := cmd().(tea.QuitMsg)
+		return ok
+	}
+
+	t.Run("closes detail view", func(t *testing.T) {
+		m := openDetailWithBody(t, "body text", 80, 24)
+		var tm tea.Model = m
+		if !tm.(model).detailOpen {
+			t.Fatal("setup: detail not open")
+		}
+		tm, cmd := tm.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+		if tm.(model).detailOpen {
+			t.Error("ctrl+g did not close the detail view")
+		}
+		if quits(cmd) {
+			t.Error("ctrl+g in detail should not quit")
+		}
+	})
+
+	t.Run("dismisses help overlay", func(t *testing.T) {
+		tm := listModel(t)
+		tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+		if !tm.(model).showHelp {
+			t.Fatal("setup: help overlay not open")
+		}
+		tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+		if tm.(model).showHelp {
+			t.Error("ctrl+g did not dismiss the help overlay")
+		}
+	})
+
+	t.Run("cancels active filter", func(t *testing.T) {
+		m := newModel()
+		var tm tea.Model = m
+		tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+		tm, _ = tm.Update(dataMsg{issues: []list.Item{
+			item{number: 1, title: "alpha", type_: "issue"},
+			item{number: 2, title: "beta", type_: "issue"},
+		}})
+		// Enter filter mode and type a query.
+		tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+		tm = typeRunes(tm, "beta")
+		if tm.(model).issueList.FilterState() == list.Unfiltered {
+			t.Fatal("setup: filter not active")
+		}
+		// ctrl+g cancels the filter, mirroring esc.
+		tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+		if got := tm.(model).issueList.FilterState(); got != list.Unfiltered {
+			t.Errorf("ctrl+g did not cancel filter: state = %v", got)
+		}
+	})
+
+	t.Run("quits from list", func(t *testing.T) {
+		tm := listModel(t)
+		_, cmd := tm.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+		if !quits(cmd) {
+			t.Error("ctrl+g in list view did not dispatch quit")
+		}
+	})
+}

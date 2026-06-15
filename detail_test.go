@@ -104,35 +104,9 @@ func TestDetailOpensAtTop(t *testing.T) {
 	}
 }
 
-// With a tall body, ctrl+n scrolls the detail viewport down one line and
-// ctrl+p scrolls it back up one line.
-func TestDetailScrollCtrlNP(t *testing.T) {
-	m := newModel()
-	long := strings.Repeat("line of body text\n", 100)
-	items := []list.Item{
-		item{number: 7, title: "scroll me", body: long, type_: "issue"},
-	}
-	m.issueList.SetItems(items)
-	m.loading = false
-
-	var tm tea.Model = m
-	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 40, Height: 10})
-	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
-
-	if off := tm.(model).detailViewport.YOffset; off != 0 {
-		t.Fatalf("expected viewport at top, got offset=%d", off)
-	}
-
-	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
-	if off := tm.(model).detailViewport.YOffset; off != 1 {
-		t.Errorf("ctrl+n: want offset 1, got %d", off)
-	}
-
-	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
-	if off := tm.(model).detailViewport.YOffset; off != 0 {
-		t.Errorf("ctrl+p: want offset 0, got %d", off)
-	}
-}
+// (TestDetailScrollCtrlNP removed — fully subsumed by
+// TestDetailCtrlNPScrollsWhenNotSearching in detail_search_test.go, which
+// asserts the same ctrl+n/ctrl+p one-line scroll behavior when not searching.)
 
 // A body shorter than the screen still renders without issue.
 func TestDetailShortBody(t *testing.T) {
