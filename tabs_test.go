@@ -39,8 +39,9 @@ func TestTabCountsAfterFetch(t *testing.T) {
 	}
 }
 
-// The list renders directly under the tab row, with no blank line between them.
-func TestListRendersDirectlyUnderTabs(t *testing.T) {
+// A blank line separates the tab row from the list content (issue #121): line 0
+// is the tabs, line 1 is blank, and the first list item lands on line 2.
+func TestBlankLineBetweenTabsAndList(t *testing.T) {
 	m := newModel()
 	m.loading = false
 	var tm tea.Model = m
@@ -50,15 +51,47 @@ func TestListRendersDirectlyUnderTabs(t *testing.T) {
 	})
 
 	lines := strings.Split(tm.(model).View(), "\n")
-	if len(lines) < 2 {
+	if len(lines) < 3 {
 		t.Fatalf("view too short: %q", lines)
 	}
-	// Line 0 is the tab row; line 1 must be the first list item, not a blank.
-	if strings.TrimSpace(lines[1]) == "" {
-		t.Errorf("blank line between tabs and list: %q", lines[:3])
+	// Line 0 is the tab row; line 1 must be the blank separator.
+	if strings.TrimSpace(lines[1]) != "" {
+		t.Errorf("missing blank line between tabs and list: %q", lines[:3])
 	}
-	if !strings.Contains(lines[1], "#1 alpha") {
-		t.Errorf("first list row not directly under tabs, got %q", lines[1])
+	// Line 2 is the first list item, directly under the separator.
+	if !strings.Contains(lines[2], "#1 alpha") {
+		t.Errorf("first list row not under the blank separator, got %q", lines[2])
+	}
+}
+
+// The list reserves two rows above it (tabs + blank separator) plus the status
+// bar below, so its height is height-2-statusBarHeight. With both reserved rows
+// and the list filled, the rendered frame must not exceed the terminal height —
+// otherwise the bottom list item collides with the status bar (issue #121).
+func TestListHeightReservesBlankLineAndStatusBar(t *testing.T) {
+	for _, h := range []int{10, 24, 40, 50} {
+		m := newModel()
+		m.loading = false
+		var tm tea.Model = m
+		tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: h})
+
+		// Fill the list with more items than can fit so the body is at full height.
+		items := make([]list.Item, 0, h)
+		for i := 0; i < h; i++ {
+			items = append(items, item{number: i + 1, title: "row", type_: "issue"})
+		}
+		tm, _ = tm.Update(dataMsg{issues: items})
+		mm := tm.(model)
+
+		wantListHeight := h - 2 - statusBarHeight
+		if got := mm.issueList.Height(); got != wantListHeight {
+			t.Errorf("h=%d: list height = %d, want %d", h, got, wantListHeight)
+		}
+
+		// The full frame (tabs + blank + list + status bar) must fit the terminal.
+		if got := strings.Count(mm.View(), "\n") + 1; got > h {
+			t.Errorf("h=%d: rendered frame is %d rows, exceeds terminal height %d", h, got, h)
+		}
 	}
 }
 
