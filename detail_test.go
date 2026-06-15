@@ -153,8 +153,8 @@ func TestDetailShortBody(t *testing.T) {
 	}
 }
 
-// The detail title must be indented to column 2 so it aligns with list items
-// (NormalTitle PaddingLeft(2)) and the rest of the app, and the indented block
+// The detail title must be indented to column 1 so it aligns with list items
+// (NormalTitle PaddingLeft(1)) and the rest of the app, and the indented block
 // must still fit the terminal width without overflow even when the title wraps.
 func TestDetailHeaderLeftMargin(t *testing.T) {
 	m := newModel()
@@ -171,8 +171,8 @@ func TestDetailHeaderLeftMargin(t *testing.T) {
 	mm := tm.(model)
 
 	firstLine := strings.SplitN(mm.detailHeader(), "\n", 2)[0]
-	if !strings.HasPrefix(firstLine, "  #99") {
-		t.Errorf("detail header not indented to column 2: %q", firstLine)
+	if !strings.HasPrefix(firstLine, " #99") {
+		t.Errorf("detail header not indented to column 1: %q", firstLine)
 	}
 
 	// A long title that wraps must keep the indented block within the terminal
@@ -190,8 +190,8 @@ func TestDetailHeaderLeftMargin(t *testing.T) {
 		t.Errorf("wrapped indented header width %d exceeds terminal width 30", gotW)
 	}
 	for _, line := range strings.Split(hdr, "\n") {
-		if !strings.HasPrefix(line, "  ") {
-			t.Errorf("wrapped header line not indented to column 2: %q", line)
+		if !strings.HasPrefix(line, " ") {
+			t.Errorf("wrapped header line not indented to column 1: %q", line)
 		}
 	}
 }

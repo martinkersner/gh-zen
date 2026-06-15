@@ -129,11 +129,11 @@ func newModel() model {
 	m.issueList.SetShowFilter(false)
 	m.prList.SetShowFilter(false)
 
-	// Indent the empty-state ("No items.") text to column 2 so it aligns with
+	// Indent the empty-state ("No items.") text to column 1 so it aligns with
 	// the tab labels and the list item titles above it (the bubbles default
 	// NoItems style has no PaddingLeft). Preserve the default subdued color.
-	m.issueList.Styles.NoItems = m.issueList.Styles.NoItems.PaddingLeft(2)
-	m.prList.Styles.NoItems = m.prList.Styles.NoItems.PaddingLeft(2)
+	m.issueList.Styles.NoItems = m.issueList.Styles.NoItems.PaddingLeft(1)
+	m.prList.Styles.NoItems = m.prList.Styles.NoItems.PaddingLeft(1)
 
 	// Move with j/k, ctrl+n / ctrl+p (and arrows). bubbletea's list disables the
 	// cursor keymap while filtering, so j/k stay literal input in the filter box.

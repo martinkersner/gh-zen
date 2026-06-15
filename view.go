@@ -79,9 +79,9 @@ func (m model) detailHeader() string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(accentColor).
-		// Indent to column 2 so the title lines up with list items
-		// (NormalTitle PaddingLeft(2)) and the rest of the app.
-		PaddingLeft(2).
+		// Indent to column 1 so the title lines up with list items
+		// (NormalTitle PaddingLeft(1)) and the rest of the app.
+		PaddingLeft(1).
 		// One blank line below the title separates it from the body. This
 		// adds a row to lipgloss.Height(detailHeader()), so the viewport
 		// sizing (which measures the rendered header) stays correct.
