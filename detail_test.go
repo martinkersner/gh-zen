@@ -283,13 +283,13 @@ func TestLabelTextColorContrast(t *testing.T) {
 }
 
 func TestRenderLabelChipsEmpty(t *testing.T) {
-	if got := renderLabelChips(nil); got != "" {
+	if got := renderLabelChips(nil, 80); got != "" {
 		t.Errorf("renderLabelChips(nil) = %q, want empty", got)
 	}
 }
 
 func TestRenderLabelChipsContainsNames(t *testing.T) {
-	chips := renderLabelChips([]label{{name: "bug", color: "d73a4a"}, {name: "docs", color: "0075ca"}})
+	chips := renderLabelChips([]label{{name: "bug", color: "d73a4a"}, {name: "docs", color: "0075ca"}}, 80)
 	plain := ansi.Strip(chips)
 	if !strings.Contains(plain, "bug") || !strings.Contains(plain, "docs") {
 		t.Errorf("chip row missing label names: %q", plain)
@@ -340,5 +340,88 @@ func TestDetailHeaderRendersLabelChips(t *testing.T) {
 	if lipgloss.Height(hdr) <= lipgloss.Height(noLabelHdr) {
 		t.Errorf("labeled header height %d should exceed no-label header height %d",
 			lipgloss.Height(hdr), lipgloss.Height(noLabelHdr))
+	}
+}
+
+// A short label set that already fits the budget renders every chip unchanged
+// from the unclamped output (no overflow marker, no dropped chips).
+func TestRenderLabelChipsShortSetUnchanged(t *testing.T) {
+	labels := []label{{name: "bug", color: "d73a4a"}, {name: "docs", color: "0075ca"}}
+	clamped := renderLabelChips(labels, 80)
+	unclamped := renderLabelChips(labels, 0) // 0 disables the clamp
+	if clamped != unclamped {
+		t.Errorf("short label set should render unchanged:\nclamped:   %q\nunclamped: %q", clamped, unclamped)
+	}
+	if strings.Contains(ansi.Strip(clamped), "+") {
+		t.Errorf("short label set should have no overflow marker: %q", ansi.Strip(clamped))
+	}
+}
+
+// Many/long labels in a narrow budget must keep the chip row within maxWidth
+// with no mid-chip wrap and surface a "+N" overflow marker for the dropped
+// chips.
+func TestRenderLabelChipsOverflowFits(t *testing.T) {
+	labels := []label{
+		{name: "needs-triage", color: "d73a4a"},
+		{name: "enhancement", color: "0075ca"},
+		{name: "documentation", color: "0e8a16"},
+		{name: "good-first-issue", color: "7057ff"},
+		{name: "help-wanted", color: "008672"},
+		{name: "wontfix", color: "ffffff"},
+	}
+	const budget = 30
+	chips := renderLabelChips(labels, budget)
+	if w := lipgloss.Width(chips); w > budget {
+		t.Errorf("chip row width %d exceeds budget %d:\n%q", w, budget, ansi.Strip(chips))
+	}
+	// The row must not wrap to a second line (no mid-chip wrap).
+	if strings.Contains(chips, "\n") {
+		t.Errorf("chip row wrapped to multiple lines:\n%q", chips)
+	}
+	// Some chips were dropped, so a "+N" marker must be present.
+	if !strings.Contains(ansi.Strip(chips), "+") {
+		t.Errorf("expected +N overflow marker, got: %q", ansi.Strip(chips))
+	}
+}
+
+// Even when a single chip is wider than the whole budget the function must
+// return without panicking and produce a single (non-wrapping) line rather
+// than emitting nothing.
+func TestRenderLabelChipsSingleChipWiderThanBudget(t *testing.T) {
+	labels := []label{{name: strings.Repeat("x", 40), color: "d73a4a"}}
+	chips := renderLabelChips(labels, 10)
+	if chips == "" {
+		t.Errorf("single oversized chip should still render something")
+	}
+	if strings.Contains(chips, "\n") {
+		t.Errorf("single oversized chip should not wrap:\n%q", chips)
+	}
+}
+
+// End to end through detailHeader at a narrow terminal width: the whole header
+// (title block + chip row) stays within m.width even with many long labels.
+func TestDetailHeaderLabelChipsWidthClamped(t *testing.T) {
+	m := newModel()
+	m.issueList.SetItems([]list.Item{
+		item{number: 42, title: "wide labels", body: "b", type_: "issue", labels: []label{
+			{name: "needs-triage", color: "d73a4a"},
+			{name: "enhancement", color: "0075ca"},
+			{name: "documentation", color: "0e8a16"},
+			{name: "good-first-issue", color: "7057ff"},
+			{name: "help-wanted", color: "008672"},
+		}},
+	})
+	m.loading = false
+
+	const w = 28
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: w, Height: 24})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	hdr := tm.(model).detailHeader()
+
+	for _, line := range strings.Split(hdr, "\n") {
+		if gotW := lipgloss.Width(line); gotW > w {
+			t.Errorf("detail header line width %d exceeds terminal width %d:\n%q", gotW, w, line)
+		}
 	}
 }

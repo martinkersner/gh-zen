@@ -103,7 +103,14 @@ func (m model) detailHeader() string {
 		titleStyle = titleStyle.Width(m.width)
 	}
 	title := fmt.Sprintf("#%d %s", m.detailItem.number, m.detailItem.title)
-	chips := renderLabelChips(m.detailItem.labels)
+	// The chip row carries PaddingLeft(1), so its content budget is one column
+	// narrower than the terminal. A non-positive budget (width 0 before the first
+	// resize) disables the clamp in renderLabelChips.
+	chipBudget := 0
+	if m.width > 0 {
+		chipBudget = m.width - 1
+	}
+	chips := renderLabelChips(m.detailItem.labels, chipBudget)
 	if chips == "" {
 		return titleStyle.Render(title)
 	}
@@ -117,19 +124,84 @@ func (m model) detailHeader() string {
 // with a black/white foreground picked for contrast (mirroring GitHub's own
 // luminance-based choice). Returns "" when there are no labels so the detail
 // header collapses to the title-only layout unchanged.
-func renderLabelChips(labels []label) string {
+//
+// maxWidth is the displayed-column budget for the chip row content (the caller
+// adds PaddingLeft(1), so it must pass m.width-1). Chips are emitted in order
+// until the next chip (plus its leading space) would exceed the budget; the
+// remaining labels are summarized by a trailing "+N" overflow marker that is
+// itself fitted within the budget. This keeps the row within the terminal
+// width with no mid-chip wrapping or right-edge overflow. A maxWidth <= 0 (no
+// resize yet) disables the clamp and renders every chip, preserving prior
+// behavior.
+func renderLabelChips(labels []label, maxWidth int) string {
 	if len(labels) == 0 {
 		return ""
 	}
-	chips := make([]string, 0, len(labels))
+
+	rendered := make([]string, 0, len(labels))
 	for _, l := range labels {
 		style := lipgloss.NewStyle().Padding(0, 1)
 		if c := normalizeHexColor(l.color); c != "" {
 			style = style.Background(lipgloss.Color(c)).Foreground(lipgloss.Color(labelTextColor(c)))
 		}
-		chips = append(chips, style.Render(l.name))
+		rendered = append(rendered, style.Render(l.name))
 	}
-	return strings.Join(chips, " ")
+
+	if maxWidth <= 0 {
+		return strings.Join(rendered, " ")
+	}
+
+	// Greedily pack chips until the next one (plus the joining space) would
+	// overflow the budget, reserving room for a "+N" marker for the rest.
+	used := 0 // displayed width consumed so far
+	kept := rendered[:0:0]
+	for i, chip := range rendered {
+		w := lipgloss.Width(chip)
+		sep := 0
+		if i > 0 {
+			sep = 1 // single space between chips
+		}
+		// Width still needed for a "+N" marker covering everything from i on.
+		overflowW := 0
+		if i < len(rendered) {
+			marker := overflowChip(len(rendered) - i)
+			overflowW = 1 + lipgloss.Width(marker) // space + marker
+		}
+		// Last chip needs no trailing overflow marker.
+		reserve := overflowW
+		if i == len(rendered)-1 {
+			reserve = 0
+		}
+		if used+sep+w+reserve > maxWidth {
+			break
+		}
+		used += sep + w
+		kept = append(kept, chip)
+	}
+
+	if len(kept) == len(rendered) {
+		return strings.Join(kept, " ")
+	}
+
+	dropped := len(rendered) - len(kept)
+	marker := overflowChip(dropped)
+	if len(kept) == 0 {
+		// Not even one chip fits alongside a marker. Show the marker alone if it
+		// fits, otherwise show the first chip (better a single overflowing chip
+		// than nothing); the title block above is the width-of-record clamp.
+		if lipgloss.Width(marker) <= maxWidth {
+			return marker
+		}
+		return rendered[0]
+	}
+	return strings.Join(kept, " ") + " " + marker
+}
+
+// overflowChip renders the "+N" marker shown when n trailing label chips are
+// dropped to keep the row within the terminal width. It uses the same padding
+// as a real chip so it lines up with the row.
+func overflowChip(n int) string {
+	return lipgloss.NewStyle().Padding(0, 1).Render(fmt.Sprintf("+%d", n))
 }
 
 // normalizeHexColor returns a "#rrggbb" lipgloss color string from a GitHub
