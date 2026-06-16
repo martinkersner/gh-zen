@@ -96,7 +96,10 @@ func testRepo() repoInfo { return repoInfo{Owner: testRepoOwner, Name: testRepoN
 func TestFetchBodyIssueSuccess(t *testing.T) {
 	fake := &fakeGraphQLClient{
 		respJSON: `{"repository":{
-			"issue":{"body":"issue body content","comments":{"totalCount":2,"nodes":[
+			"issue":{"body":"issue body content","labels":{"nodes":[
+				{"name":"bug","color":"d73a4a"},
+				{"name":"good first issue","color":"7057ff"}
+			]},"comments":{"totalCount":2,"nodes":[
 				{"author":{"login":"alice"},"body":"first comment"},
 				{"author":{"login":"bob"},"body":"second comment"}
 			]}},
@@ -105,7 +108,7 @@ func TestFetchBodyIssueSuccess(t *testing.T) {
 	}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	body, comments, total, err := fetchBody(42, false)
+	body, comments, total, labels, err := fetchBody(42, false)
 	if err != nil {
 		t.Fatalf("fetchBody returned error: %v", err)
 	}
@@ -117,6 +120,18 @@ func TestFetchBodyIssueSuccess(t *testing.T) {
 	}
 	if total != 2 {
 		t.Errorf("totalCount = %d, want 2", total)
+	}
+	if len(labels) != 2 {
+		t.Fatalf("got %d labels, want 2", len(labels))
+	}
+	if labels[0].name != "bug" || labels[0].color != "d73a4a" {
+		t.Errorf("label[0] = %+v, want {bug d73a4a}", labels[0])
+	}
+	if labels[1].name != "good first issue" || labels[1].color != "7057ff" {
+		t.Errorf("label[1] = %+v, want {good first issue 7057ff}", labels[1])
+	}
+	if !strings.Contains(fake.gotQuery, "labels(first: $labels)") {
+		t.Errorf("query did not request labels:\n%s", fake.gotQuery)
 	}
 	if !strings.Contains(fake.gotQuery, "totalCount") {
 		t.Errorf("query did not request totalCount:\n%s", fake.gotQuery)
@@ -135,6 +150,9 @@ func TestFetchBodyIssueSuccess(t *testing.T) {
 	}
 	if got := gotVars["comments"]; got != commentsFetchLimit {
 		t.Errorf("comments var = %v, want %d", got, commentsFetchLimit)
+	}
+	if got := gotVars["labels"]; got != labelsFetchLimit {
+		t.Errorf("labels var = %v, want %d", got, labelsFetchLimit)
 	}
 	if !strings.Contains(gotQuery, "comments(first: $comments)") {
 		t.Errorf("query did not request comments:\n%s", gotQuery)
@@ -161,7 +179,7 @@ func TestFetchBodyPRSuccess(t *testing.T) {
 	}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	body, comments, total, err := fetchBody(7, true)
+	body, comments, total, labels, err := fetchBody(7, true)
 	if err != nil {
 		t.Fatalf("fetchBody returned error: %v", err)
 	}
@@ -170,6 +188,11 @@ func TestFetchBodyPRSuccess(t *testing.T) {
 	}
 	if len(comments) != 1 || comments[0].author != "carol" || comments[0].body != "pr comment" {
 		t.Errorf("comments = %+v", comments)
+	}
+	// The PR payload carries no labels node, so labels comes back empty (the
+	// "no labels" case): nil, not a panic.
+	if len(labels) != 0 {
+		t.Errorf("labels = %+v, want none", labels)
 	}
 	// totalCount can exceed the returned node count when the thread is longer
 	// than commentsFetchLimit; fetchBody surfaces the true total.
@@ -185,7 +208,7 @@ func TestFetchBodyClientError(t *testing.T) {
 	wantErr := errors.New("no auth token")
 	withFakeGitHub(t, nil, wantErr, testRepo(), nil)
 
-	_, _, _, err := fetchBody(1, false)
+	_, _, _, _, err := fetchBody(1, false)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
@@ -195,7 +218,7 @@ func TestFetchBodyRepoError(t *testing.T) {
 	wantErr := errors.New("not a git repo")
 	withFakeGitHub(t, &fakeGraphQLClient{}, nil, repoInfo{}, wantErr)
 
-	_, _, _, err := fetchBody(1, false)
+	_, _, _, _, err := fetchBody(1, false)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
@@ -206,7 +229,7 @@ func TestFetchBodyQueryError(t *testing.T) {
 	fake := &fakeGraphQLClient{err: wantErr}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	_, _, _, err := fetchBody(1, false)
+	_, _, _, _, err := fetchBody(1, false)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}

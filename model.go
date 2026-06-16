@@ -574,6 +574,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			offset := m.detailViewport.YOffset
 			m.detailBody = m.cachedBody(m.detailItem)
 			m.detailLoading = false
+			// Labels arrive only with the full fetch (prefetch carries none); a
+			// chip row adds a header line, so resize the viewport against the
+			// remeasured header before re-rendering. Skip on prefetch so an empty
+			// label slice can't blank a populated chip row.
+			if !msg.prefetch {
+				m.detailItem.labels = msg.labels
+				m.resizeDetailViewport()
+			}
 			if !m.detailShowDiff {
 				// Re-locate matches against the (possibly changed) body so the
 				// highlight stays valid; clamp the active match if the count shrank.
@@ -687,11 +695,11 @@ func (m model) cmdFetchBody(it *item) tea.Cmd {
 	number := it.number
 	isPR := it.type_ == "pr"
 	return func() tea.Msg {
-		body, comments, total, err := fetchBody(number, isPR)
+		body, comments, total, labels, err := fetchBody(number, isPR)
 		if err != nil {
 			return bodyMsg{key: key, err: err}
 		}
-		return bodyMsg{key: key, body: composeDetailBody(body, comments, total)}
+		return bodyMsg{key: key, body: composeDetailBody(body, comments, total), labels: labels}
 	}
 }
 
