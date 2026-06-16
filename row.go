@@ -41,13 +41,18 @@ type itemDelegate struct {
 func newItemDelegate() itemDelegate {
 	s := list.NewDefaultItemStyles()
 	// Shrink the left gutter by 1 column so the whole app sits at column 1
-	// instead of column 2. NormalTitle/DimmedTitle pad 1 (no border); the
-	// SelectedTitle keeps its 1-col left border but pads 0, so the border lives
-	// in column 0 and normal rows blank-pad column 0 — same horizontal frame
-	// size (1), so moving the cursor causes no horizontal shift (see issue #122).
+	// instead of column 2. The selected row is marked by its accent foreground
+	// alone — no left border, no vertical bar (issue #132). All three styles pad
+	// left 1 with no border, so every row has horizontal frame size 1 and moving
+	// the cursor causes no horizontal shift (the no-shift invariant from #122).
 	s.NormalTitle = s.NormalTitle.PaddingLeft(1)
 	s.DimmedTitle = s.DimmedTitle.PaddingLeft(1)
-	s.SelectedTitle = s.SelectedTitle.PaddingLeft(0)
+	// Drop the bubbles-default 1-col left border on the selected row (all four
+	// sides off) and pad left 1 instead, so its frame stays size 1 to match the
+	// normal/dimmed rows.
+	s.SelectedTitle = s.SelectedTitle.
+		Border(lipgloss.NormalBorder(), false, false, false, false).
+		PaddingLeft(1)
 	return itemDelegate{
 		styles: s,
 	}
@@ -145,10 +150,10 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	isFiltered := m.FilterState() == list.Filtering || m.FilterState() == list.FilterApplied
 
 	// Pick the row style first so the available text width is derived from that
-	// style's own horizontal frame (padding + border). SelectedTitle pads 0 but
-	// adds a 1-col left border, while NormalTitle pads 1 with no border; using
-	// each style's GetHorizontalFrameSize keeps long titles truncating at the
-	// same visible column regardless of selection.
+	// style's own horizontal frame (padding + border). All three styles pad left
+	// 1 with no border, so their horizontal frames match; using each style's
+	// GetHorizontalFrameSize keeps long titles truncating at the same visible
+	// column regardless of selection.
 	rowStyle := s.NormalTitle
 	switch {
 	case emptyFilter:
