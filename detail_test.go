@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestDetailViewportSize(t *testing.T) {
@@ -247,5 +248,97 @@ func TestComposeDetailBodyNotTruncated(t *testing.T) {
 	}
 	if withTotal != zeroTotal {
 		t.Errorf("totalCount==0 should render identically to total==len:\n%q\n%q", zeroTotal, withTotal)
+	}
+}
+
+// --- label chips ---
+
+func TestNormalizeHexColor(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"d73a4a", "#d73a4a"},  // bare GitHub color
+		{"#d73a4a", "#d73a4a"}, // tolerate leading '#'
+		{"", ""},               // empty
+		{"abc", ""},            // too short
+		{"d73a4a00", ""},       // too long
+		{"gggggg", ""},         // non-hex digits
+	}
+	for _, c := range cases {
+		if got := normalizeHexColor(c.in); got != c.want {
+			t.Errorf("normalizeHexColor(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestLabelTextColorContrast(t *testing.T) {
+	// Light backgrounds get black text, dark backgrounds get white.
+	if got := labelTextColor("#f9e2af"); got != "#000000" {
+		t.Errorf("light bg text = %q, want #000000", got)
+	}
+	if got := labelTextColor("#0e8a16"); got != "#ffffff" {
+		t.Errorf("dark bg text = %q, want #ffffff", got)
+	}
+}
+
+func TestRenderLabelChipsEmpty(t *testing.T) {
+	if got := renderLabelChips(nil); got != "" {
+		t.Errorf("renderLabelChips(nil) = %q, want empty", got)
+	}
+}
+
+func TestRenderLabelChipsContainsNames(t *testing.T) {
+	chips := renderLabelChips([]label{{name: "bug", color: "d73a4a"}, {name: "docs", color: "0075ca"}})
+	plain := ansi.Strip(chips)
+	if !strings.Contains(plain, "bug") || !strings.Contains(plain, "docs") {
+		t.Errorf("chip row missing label names: %q", plain)
+	}
+	// Each chip is padded by one space on each side (Padding(0,1)), so the names
+	// read as distinct chips rather than running together. (Color escapes are
+	// omitted by lipgloss when no terminal color profile is detected, as under
+	// `go test`, so we assert on structure, not ANSI.)
+	if !strings.Contains(plain, " bug ") || !strings.Contains(plain, " docs ") {
+		t.Errorf("chips not space-padded: %q", plain)
+	}
+}
+
+// A detail item with labels renders a chip row beneath the title; the names are
+// present in the header and the header grows taller than the title-only case.
+func TestDetailHeaderRendersLabelChips(t *testing.T) {
+	m := newModel()
+	m.issueList.SetItems([]list.Item{
+		item{number: 7, title: "labeled issue", body: "b", type_: "issue",
+			labels: []label{{name: "bug", color: "d73a4a"}}},
+	})
+	m.loading = false
+
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm := tm.(model)
+
+	hdr := mm.detailHeader()
+	if !strings.Contains(ansi.Strip(hdr), "bug") {
+		t.Errorf("detail header missing label chip:\n%s", ansi.Strip(hdr))
+	}
+
+	// Same item without labels: header omits the chip row and is shorter.
+	m2 := newModel()
+	m2.issueList.SetItems([]list.Item{
+		item{number: 7, title: "labeled issue", body: "b", type_: "issue"},
+	})
+	m2.loading = false
+	var tm2 tea.Model = m2
+	tm2, _ = tm2.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm2, _ = tm2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	noLabelHdr := tm2.(model).detailHeader()
+
+	if strings.Contains(ansi.Strip(noLabelHdr), "bug") {
+		t.Errorf("no-label header unexpectedly contains a chip:\n%s", noLabelHdr)
+	}
+	if lipgloss.Height(hdr) <= lipgloss.Height(noLabelHdr) {
+		t.Errorf("labeled header height %d should exceed no-label header height %d",
+			lipgloss.Height(hdr), lipgloss.Height(noLabelHdr))
 	}
 }
