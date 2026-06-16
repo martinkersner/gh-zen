@@ -9,10 +9,9 @@ import (
 )
 
 // A long title must truncate at the same visible column whether or not the row
-// is selected. SelectedTitle and NormalTitle have different padding (0 vs 1) but
-// SelectedTitle adds a 1-col left border, so both have the same horizontal frame
-// size; deriving textwidth per-row-style keeps the truncated text identical.
-// Regression test for issue #72.
+// is selected. SelectedTitle and NormalTitle both pad left 1 with no border, so
+// both have the same horizontal frame size; deriving textwidth per-row-style
+// keeps the truncated text identical. Regression test for issues #72 and #122.
 func TestRenderTruncatesSameColumnSelectedAndNormal(t *testing.T) {
 	d := newItemDelegate()
 	const width = 30

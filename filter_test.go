@@ -5,6 +5,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 func mkKey(s string) tea.KeyMsg {
@@ -21,6 +23,15 @@ func mkKey(s string) tea.KeyMsg {
 }
 
 func TestFilterMove(t *testing.T) {
+	// The selected row is marked by its accent foreground, not a border glyph
+	// (issue #132), so the highlight is only visible under a color-capable
+	// profile. Force TrueColor so View() reflects the color-based selection;
+	// without it the test's default Ascii profile strips all foreground color
+	// and the moved highlight would be invisible.
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
 	m := newModel()
 	items := []list.Item{
 		item{number: 1, title: "alpha", type_: "issue"},
