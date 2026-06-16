@@ -194,9 +194,17 @@ func TestE2EFilter(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	tm.Type("beta")
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		// "second issue beta" matches; "first issue alpha" is filtered out.
-		return bytes.Contains(b, []byte("second issue beta")) &&
-			!bytes.Contains(b, []byte("first issue alpha"))
+		// Assert only positives. teatest's WaitFor accumulates every byte read so
+		// far into one growing buffer, so a negative like !Contains("first issue
+		// alpha") is race-prone: an interim frame (filter just opened, query still
+		// empty, full list still visible) lands "first issue alpha" in the buffer
+		// permanently, and no later frame can remove it — raising the timeout
+		// cannot help. Instead wait for the settled filtered state: the applied
+		// query "/beta" in the status bar (only rendered once the whole query is
+		// typed) together with the sole matching row. Reaching that state is what
+		// proves the non-matching row dropped out. (Issue #127.)
+		return bytes.Contains(b, []byte("/beta")) &&
+			bytes.Contains(b, []byte("second issue beta"))
 	}, teatest.WithDuration(e2eWaitTimeout))
 	// esc clears the filter; the filtered-out row reappears.
 	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
