@@ -11,11 +11,20 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// label is a single GitHub label on an issue/PR: its display name and the hex
+// color GitHub returns (e.g. "d73a4a", no leading '#'), rendered directly as a
+// chip in the detail view (see detailHeader).
+type label struct {
+	name  string
+	color string
+}
+
 type item struct {
 	number int
 	title  string
 	body   string
-	type_  string // "issue" or "pr"
+	type_  string  // "issue" or "pr"
+	labels []label // GitHub labels, populated by the detail fetch (fetchBody)
 }
 
 // FilterValue mirrors Title() so substring search matches both the issue/PR
