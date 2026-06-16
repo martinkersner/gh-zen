@@ -32,7 +32,7 @@ func TestHelpOverlayOpensFromList(t *testing.T) {
 		t.Fatal("? did not open the help overlay")
 	}
 	view := mm.View()
-	for _, want := range []string{"Keyboard shortcuts", "quit", "filter", "open"} {
+	for _, want := range []string{"Keyboard shortcuts", "quit", "filter", "open", "open in browser"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("help overlay missing %q: %q", want, view)
 		}
@@ -94,7 +94,7 @@ func TestHelpOverlayReflectsDetailMode(t *testing.T) {
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
 
 	view := tm.(model).View()
-	for _, want := range []string{"back", "scroll", "show diff"} {
+	for _, want := range []string{"back", "scroll", "show diff", "open in browser"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("detail help overlay missing %q: %q", want, view)
 		}

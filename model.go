@@ -412,6 +412,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "r":
 				return m, m.refreshCurrentView(false)
+			case "o":
+				// Open the item shown in the detail view on GitHub. No-op if
+				// nothing is open (guarded in cmdOpenInBrowser).
+				return m, m.cmdOpenInBrowser(m.detailItem)
 			}
 			// Forward scroll keys (arrows, pgup/pgdn, j/k) to the viewport.
 			var cmd tea.Cmd
@@ -460,6 +464,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "r":
 			return m, m.refreshCurrentView(false)
+		case "o":
+			// Open the highlighted item on GitHub. No-op on an empty list
+			// (selectedItem is nil; guarded in cmdOpenInBrowser).
+			return m, m.cmdOpenInBrowser(m.selectedItem())
 		case "tab", "l", "right":
 			m.activeTab = (m.activeTab + 1) % tab(len(m.tabs))
 			m.updateListSize()
@@ -714,6 +722,23 @@ func (m model) toggleDiff() (tea.Model, tea.Cmd) {
 	m.detailViewport.SetContent(m.detailContent())
 	m.detailViewport.GotoTop()
 	return m, m.cmdFetchDiff(m.detailItem)
+}
+
+// cmdOpenInBrowser opens the given item's GitHub page in the default browser via
+// `gh ... view --web` (see ghOpenInBrowser). It returns nil for a nil item so an
+// empty list is a safe no-op. The browser open is fire-and-forget: a failure is
+// ignored so it never hijacks the view with an error (the gh call returns
+// promptly once the browser is launched).
+func (m model) cmdOpenInBrowser(it *item) tea.Cmd {
+	if it == nil {
+		return nil
+	}
+	itemType := it.type_
+	number := it.number
+	return func() tea.Msg {
+		_ = ghOpenInBrowser(itemType, number)
+		return nil
+	}
 }
 
 // cmdFetchDiff fetches the focused PR's diff. Kept off the body path because the

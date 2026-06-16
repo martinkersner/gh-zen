@@ -187,6 +187,21 @@ func fetchDiff(number int) (string, error) {
 	return ghDiff(number)
 }
 
+// ghOpenInBrowser shells out to `gh <issue|pr> view <number> --web`, which opens
+// the item's GitHub page in the default browser and returns promptly. itemType
+// is "issue" or "pr". It is a package var so tests can stub it and assert the
+// open without launching a real browser (mirroring the ghDiff seam).
+var ghOpenInBrowser = func(itemType string, number int) error {
+	_, stderr, err := gh.Exec(itemType, "view", strconv.Itoa(number), "--web")
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("%s: %w", msg, err)
+		}
+		return err
+	}
+	return nil
+}
+
 // colorizeDiff applies green/red foreground colors to added/removed diff lines
 // (leaving hunk headers and context lines unstyled) so the diff is readable in
 // the detail viewport. Plain-text rendering is the fallback when the input has

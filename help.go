@@ -59,6 +59,7 @@ func (m model) currentShortcuts() []shortcut {
 		s = append(s,
 			shortcut{"g/G", "top/bottom"},
 			shortcut{"/", "search"},
+			shortcut{"o", "open in browser"},
 			shortcut{"r", "refresh"},
 			shortcut{"?", "toggle help"},
 		)
@@ -72,6 +73,7 @@ func (m model) currentShortcuts() []shortcut {
 		{"g/G", "first/last"},
 		{"/", "filter"},
 		{"enter", "open"},
+		{"o", "open in browser"},
 		{"t", "theme"},
 		{"r", "refresh"},
 		{"?", "toggle help"},
