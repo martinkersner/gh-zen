@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 func TestDetailViewportSize(t *testing.T) {
@@ -171,9 +172,9 @@ func TestDetailHeaderLeftMargin(t *testing.T) {
 	}
 }
 
-// The detail header surfaces the issue/PR opener's login ("by @author") next to
-// the title once the fetch has populated it. An item without an author keeps the
-// title-only header (the cheap list body carries no author yet).
+// The detail header surfaces the issue/PR opener's login ("@author") on its
+// own row below the title once the fetch has populated it. An item without an
+// author keeps the title-only header (the cheap list body carries no author yet).
 func TestDetailHeaderRendersAuthor(t *testing.T) {
 	m := newModel()
 	m.issueList.SetItems([]list.Item{
@@ -185,11 +186,34 @@ func TestDetailHeaderRendersAuthor(t *testing.T) {
 	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	hdr := ansi.Strip(tm.(model).detailHeader())
-	if !strings.Contains(hdr, "by @octocat") {
+	if !strings.Contains(hdr, "@octocat") {
 		t.Errorf("detail header missing author attribution:\n%s", hdr)
 	}
 
-	// No author set: header shows the title without a "by @" attribution.
+	// The author must sit on its own row, below the title row, not appended to
+	// the title line.
+	lines := strings.Split(hdr, "\n")
+	titleIdx, authorIdx := -1, -1
+	for i, ln := range lines {
+		if strings.Contains(ln, "authored issue") {
+			titleIdx = i
+		}
+		if strings.Contains(ln, "@octocat") {
+			authorIdx = i
+		}
+	}
+	if titleIdx < 0 || authorIdx < 0 {
+		t.Fatalf("title and/or author row missing:\n%s", hdr)
+	}
+	if authorIdx <= titleIdx {
+		t.Errorf("author row (line %d) should be below the title row (line %d):\n%s",
+			authorIdx, titleIdx, hdr)
+	}
+	if strings.Contains(lines[titleIdx], "@octocat") {
+		t.Errorf("author should not be concatenated onto the title line: %q", lines[titleIdx])
+	}
+
+	// No author set: header shows the title without an "@author" attribution.
 	m2 := newModel()
 	m2.issueList.SetItems([]list.Item{
 		item{number: 7, title: "authored issue", body: "b", type_: "issue"},
@@ -199,8 +223,51 @@ func TestDetailHeaderRendersAuthor(t *testing.T) {
 	tm2, _ = tm2.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	tm2, _ = tm2.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	noAuthorHdr := ansi.Strip(tm2.(model).detailHeader())
-	if strings.Contains(noAuthorHdr, "by @") {
+	if strings.Contains(noAuthorHdr, "@") {
 		t.Errorf("no-author header unexpectedly contains an attribution:\n%s", noAuthorHdr)
+	}
+}
+
+// The author row is styled in the muted color so it reads as visually distinct
+// from the bold accent-colored title (issue #145).
+func TestDetailHeaderAuthorMutedColor(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	// Truecolor SGR sequences lipgloss emits for the default (Tokyo Night dark)
+	// accent (#7aa2f7) and muted (#565f89) colors.
+	const accentSGR = "38;2;121;162;247"
+	const mutedSGR = "38;2;86;95;137"
+
+	m := newModel()
+	m.issueList.SetItems([]list.Item{
+		item{number: 7, title: "authored issue", body: "b", type_: "issue", author: "octocat"},
+	})
+	m.loading = false
+
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	hdr := tm.(model).detailHeader()
+
+	// Find the rendered author row and assert it carries the muted color, not the
+	// accent the title uses.
+	var authorLine string
+	for _, ln := range strings.Split(hdr, "\n") {
+		if strings.Contains(ansi.Strip(ln), "@octocat") {
+			authorLine = ln
+			break
+		}
+	}
+	if authorLine == "" {
+		t.Fatalf("author row not found in header:\n%s", hdr)
+	}
+	if !strings.Contains(authorLine, mutedSGR) {
+		t.Errorf("author row missing muted color %q:\n%q", mutedSGR, authorLine)
+	}
+	if strings.Contains(authorLine, accentSGR) {
+		t.Errorf("author row unexpectedly carries the title accent color %q:\n%q", accentSGR, authorLine)
 	}
 }
 
@@ -222,7 +289,7 @@ func TestBodyMsgPopulatesAuthor(t *testing.T) {
 	if mm.detailItem.author != "octocat" {
 		t.Errorf("detailItem.author = %q, want %q", mm.detailItem.author, "octocat")
 	}
-	if !strings.Contains(ansi.Strip(mm.detailHeader()), "by @octocat") {
+	if !strings.Contains(ansi.Strip(mm.detailHeader()), "@octocat") {
 		t.Errorf("header missing author after bodyMsg:\n%s", ansi.Strip(mm.detailHeader()))
 	}
 }
