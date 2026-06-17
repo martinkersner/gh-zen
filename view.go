@@ -82,6 +82,11 @@ func (m model) detailHeader() string {
 	}
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
+		// Underline the title on top of the accent foreground so it reads as the
+		// view's heading and stays visually distinct from the body — both from
+		// glamour's gray paragraph text and from any leading markdown heading in
+		// the body, which glamour also renders bold-and-colored (issue #137).
+		Underline(true).
 		Foreground(accentColor).
 		// Indent to column 1 so the title lines up with list items
 		// (NormalTitle PaddingLeft(1)) and the rest of the app.

@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 func TestDetailViewportSize(t *testing.T) {
@@ -423,5 +424,48 @@ func TestDetailHeaderLabelChipsWidthClamped(t *testing.T) {
 		if gotW := lipgloss.Width(line); gotW > w {
 			t.Errorf("detail header line width %d exceeds terminal width %d:\n%q", gotW, w, line)
 		}
+	}
+}
+
+// The detail-view title carries the underline SGR (in addition to its accent
+// foreground) so it reads as the view's heading and stays visually distinct
+// from the body text, which is never underlined. lipgloss folds underline into
+// the SGR parameters, so the underline introducer (4) appears as one parameter
+// in the combined sequence — e.g. "\x1b[1;4;38;2;...m" (bold;underline;color).
+// The Ascii profile forced in TestMain strips all SGR, so force TrueColor for
+// this assertion. Issue #137.
+func TestDetailTitleIsUnderlined(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := newModel()
+	m.issueList.SetItems([]list.Item{
+		item{number: 9, title: "heading text", body: "plain body", type_: "issue"},
+	})
+	m.loading = false
+
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	hdr := tm.(model).detailHeader()
+
+	// hasUnderlineSGR reports whether s contains the underline parameter (4)
+	// inside an SGR sequence, in any position lipgloss may emit it: standalone
+	// ("\x1b[4m"), leading ("\x1b[4;…m"), or folded after other params
+	// (";4;" / ";4m") such as the bold-then-underline "\x1b[1;4;…m" here.
+	hasUnderlineSGR := func(s string) bool {
+		return strings.Contains(s, "\x1b[4m") || strings.Contains(s, "\x1b[4;") ||
+			strings.Contains(s, ";4m") || strings.Contains(s, ";4;")
+	}
+
+	if !hasUnderlineSGR(hdr) {
+		t.Errorf("detail title missing underline SGR (4): %q", hdr)
+	}
+	// The body content must not carry the underline, so the assertion above is
+	// the title's heading treatment, not noise shared with the body.
+	body := tm.(model).detailBodyContent()
+	if hasUnderlineSGR(body) {
+		t.Errorf("detail body unexpectedly carries underline SGR: %q", body)
 	}
 }
