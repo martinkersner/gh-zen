@@ -28,11 +28,22 @@ type item struct {
 	labels []label // GitHub labels, populated by the detail fetch (fetchBody)
 }
 
-// FilterValue mirrors Title() so substring search matches both the issue/PR
-// number and the title, and matched rune indexes line up with the rendered
-// row for highlighting.
-func (i item) FilterValue() string { return fmt.Sprintf("#%d %s", i.number, i.title) }
-func (i item) Title() string       { return fmt.Sprintf("#%d %s", i.number, i.title) }
+// FilterValue extends Title() with the "@author" suffix so substring search
+// matches the issue/PR number, the title, AND the author login (issue #143).
+// The "@<author>" form means both a bare login ("octocat") and the "@login"
+// form ("@octocat") match as substrings. The title/number prefix is identical
+// to Title() so matched rune indexes still line up with the rendered row for
+// highlighting; author-region matches fall past the title and are simply not
+// highlighted (harmless — the delegate only highlights indexes within the
+// rendered title).
+func (i item) FilterValue() string {
+	v := i.Title()
+	if i.author != "" {
+		v += " @" + i.author
+	}
+	return v
+}
+func (i item) Title() string { return fmt.Sprintf("#%d %s", i.number, i.title) }
 func (i item) Description() string { return "" }
 
 // numberStyle is the distinct color applied to the "#<number>" prefix so it
