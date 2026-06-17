@@ -171,6 +171,62 @@ func TestDetailHeaderLeftMargin(t *testing.T) {
 	}
 }
 
+// The detail header surfaces the issue/PR opener's login ("by @author") next to
+// the title once the fetch has populated it. An item without an author keeps the
+// title-only header (the cheap list body carries no author yet).
+func TestDetailHeaderRendersAuthor(t *testing.T) {
+	m := newModel()
+	m.issueList.SetItems([]list.Item{
+		item{number: 7, title: "authored issue", body: "b", type_: "issue", author: "octocat"},
+	})
+	m.loading = false
+
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	hdr := ansi.Strip(tm.(model).detailHeader())
+	if !strings.Contains(hdr, "by @octocat") {
+		t.Errorf("detail header missing author attribution:\n%s", hdr)
+	}
+
+	// No author set: header shows the title without a "by @" attribution.
+	m2 := newModel()
+	m2.issueList.SetItems([]list.Item{
+		item{number: 7, title: "authored issue", body: "b", type_: "issue"},
+	})
+	m2.loading = false
+	var tm2 tea.Model = m2
+	tm2, _ = tm2.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm2, _ = tm2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	noAuthorHdr := ansi.Strip(tm2.(model).detailHeader())
+	if strings.Contains(noAuthorHdr, "by @") {
+		t.Errorf("no-author header unexpectedly contains an attribution:\n%s", noAuthorHdr)
+	}
+}
+
+// The author flows from a full body fetch (bodyMsg) onto the open detail item so
+// the header reflects the fetched opener login.
+func TestBodyMsgPopulatesAuthor(t *testing.T) {
+	m := newModel()
+	it := item{number: 7, title: "issue", body: "b", type_: "issue"}
+	m.issueList.SetItems([]list.Item{it})
+	m.loading = false
+
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm := tm.(model)
+
+	tm, _ = mm.Update(bodyMsg{key: cacheKey(mm.detailItem), body: "full body", author: "octocat"})
+	mm = tm.(model)
+	if mm.detailItem.author != "octocat" {
+		t.Errorf("detailItem.author = %q, want %q", mm.detailItem.author, "octocat")
+	}
+	if !strings.Contains(ansi.Strip(mm.detailHeader()), "by @octocat") {
+		t.Errorf("header missing author after bodyMsg:\n%s", ansi.Strip(mm.detailHeader()))
+	}
+}
+
 func TestComposeDetailBodyNoComments(t *testing.T) {
 	// With no comments the body must be returned verbatim so the empty-state and
 	// loading handling in detailWrappedLines stay unchanged.

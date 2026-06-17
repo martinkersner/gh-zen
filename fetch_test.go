@@ -96,7 +96,7 @@ func testRepo() repoInfo { return repoInfo{Owner: testRepoOwner, Name: testRepoN
 func TestFetchBodyIssueSuccess(t *testing.T) {
 	fake := &fakeGraphQLClient{
 		respJSON: `{"repository":{
-			"issue":{"body":"issue body content","labels":{"nodes":[
+			"issue":{"body":"issue body content","author":{"login":"octocat"},"labels":{"nodes":[
 				{"name":"bug","color":"d73a4a"},
 				{"name":"good first issue","color":"7057ff"}
 			]},"comments":{"totalCount":2,"nodes":[
@@ -108,12 +108,18 @@ func TestFetchBodyIssueSuccess(t *testing.T) {
 	}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	body, comments, total, labels, err := fetchBody(42, false)
+	body, comments, total, labels, author, err := fetchBody(42, false)
 	if err != nil {
 		t.Fatalf("fetchBody returned error: %v", err)
 	}
 	if body != "issue body content" {
 		t.Errorf("body = %q, want %q", body, "issue body content")
+	}
+	if author != "octocat" {
+		t.Errorf("author = %q, want %q", author, "octocat")
+	}
+	if !strings.Contains(fake.gotQuery, "author { login }") {
+		t.Errorf("query did not request the author:\n%s", fake.gotQuery)
 	}
 	if len(comments) != 2 {
 		t.Fatalf("got %d comments, want 2", len(comments))
@@ -172,19 +178,22 @@ func TestFetchBodyPRSuccess(t *testing.T) {
 	fake := &fakeGraphQLClient{
 		respJSON: `{"repository":{
 			"issue":{"body":"SHOULD NOT BE USED","comments":{"nodes":[]}},
-			"pullRequest":{"body":"pr body content","comments":{"totalCount":60,"nodes":[
+			"pullRequest":{"body":"pr body content","author":{"login":"hubot"},"comments":{"totalCount":60,"nodes":[
 				{"author":{"login":"carol"},"body":"pr comment"}
 			]}}
 		}}`,
 	}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	body, comments, total, labels, err := fetchBody(7, true)
+	body, comments, total, labels, author, err := fetchBody(7, true)
 	if err != nil {
 		t.Fatalf("fetchBody returned error: %v", err)
 	}
 	if body != "pr body content" {
 		t.Errorf("body = %q, want %q", body, "pr body content")
+	}
+	if author != "hubot" {
+		t.Errorf("author = %q, want %q", author, "hubot")
 	}
 	if len(comments) != 1 || comments[0].author != "carol" || comments[0].body != "pr comment" {
 		t.Errorf("comments = %+v", comments)
@@ -208,7 +217,7 @@ func TestFetchBodyClientError(t *testing.T) {
 	wantErr := errors.New("no auth token")
 	withFakeGitHub(t, nil, wantErr, testRepo(), nil)
 
-	_, _, _, _, err := fetchBody(1, false)
+	_, _, _, _, _, err := fetchBody(1, false)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
@@ -218,7 +227,7 @@ func TestFetchBodyRepoError(t *testing.T) {
 	wantErr := errors.New("not a git repo")
 	withFakeGitHub(t, &fakeGraphQLClient{}, nil, repoInfo{}, wantErr)
 
-	_, _, _, _, err := fetchBody(1, false)
+	_, _, _, _, _, err := fetchBody(1, false)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
@@ -229,7 +238,7 @@ func TestFetchBodyQueryError(t *testing.T) {
 	fake := &fakeGraphQLClient{err: wantErr}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	_, _, _, _, err := fetchBody(1, false)
+	_, _, _, _, _, err := fetchBody(1, false)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}

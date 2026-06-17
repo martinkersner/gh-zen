@@ -103,6 +103,13 @@ func (m model) detailHeader() string {
 		titleStyle = titleStyle.Width(m.width)
 	}
 	title := fmt.Sprintf("#%d %s", m.detailItem.number, m.detailItem.title)
+	// Surface the opener's login next to the title once the detail fetch has
+	// populated it (the cheap list/prefetch item carries no author). Kept inside
+	// the width-constrained title string so it wraps with the title rather than
+	// overflowing the terminal width.
+	if m.detailItem.author != "" {
+		title += fmt.Sprintf(" by @%s", m.detailItem.author)
+	}
 	// The chip row carries PaddingLeft(1), so its content budget is one column
 	// narrower than the terminal. A non-positive budget (width 0 before the first
 	// resize) disables the clamp in renderLabelChips.

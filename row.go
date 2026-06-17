@@ -24,6 +24,7 @@ type item struct {
 	title  string
 	body   string
 	type_  string  // "issue" or "pr"
+	author string  // opener's login, populated by the detail fetch (fetchBody)
 	labels []label // GitHub labels, populated by the detail fetch (fetchBody)
 }
 
