@@ -85,31 +85,35 @@ func (m model) detailHeader() string {
 		Foreground(accentColor).
 		// Indent to column 1 so the title lines up with list items
 		// (NormalTitle PaddingLeft(1)) and the rest of the app.
-		PaddingLeft(1).
-		// One blank line below the title separates it from the body. This
-		// adds a row to lipgloss.Height(detailHeader()), so the viewport
-		// sizing (which measures the rendered header) stays correct.
-		MarginBottom(1)
+		PaddingLeft(1)
 	// Constrain to the terminal width so a long title wraps deterministically;
 	// skip the constraint before the first resize (width 0) to avoid clamping to
 	// zero columns. lipgloss subtracts PaddingLeft from this Width, so the
 	// rendered block (padding + content) still fits the terminal exactly.
-	//
-	// When the item has no labels the bottom margin is kept on the title so the
-	// rendered height (and thus viewport sizing) is unchanged from before. With
-	// labels the margin moves to the chip row so the blank separator line still
-	// sits below the whole block, and the chips occupy the row between.
 	if m.width > 0 {
 		titleStyle = titleStyle.Width(m.width)
 	}
 	title := fmt.Sprintf("#%d %s", m.detailItem.number, m.detailItem.title)
-	// Surface the opener's login next to the title once the detail fetch has
-	// populated it (the cheap list/prefetch item carries no author). Kept inside
-	// the width-constrained title string so it wraps with the title rather than
-	// overflowing the terminal width.
+
+	// The header is a vertical stack of rows: the title, an optional author row,
+	// and an optional label chip row. The last row carries MarginBottom(1) so a
+	// single blank separator line sits below the whole block (this row counts
+	// toward lipgloss.Height(detailHeader()), keeping the viewport sizing
+	// correct); all preceding rows carry no bottom margin.
+	rows := []string{titleStyle.Render(title)}
+
+	// Surface the opener's login on its own row below the title once the detail
+	// fetch has populated it (the cheap list/prefetch item carries no author).
+	// Rendered in the muted color so it reads as secondary to the bold accent
+	// title rather than blending into it. Omitted entirely when empty.
 	if m.detailItem.author != "" {
-		title += fmt.Sprintf(" by @%s", m.detailItem.author)
+		authorStyle := lipgloss.NewStyle().Foreground(mutedColor).PaddingLeft(1)
+		if m.width > 0 {
+			authorStyle = authorStyle.Width(m.width)
+		}
+		rows = append(rows, authorStyle.Render(fmt.Sprintf("by @%s", m.detailItem.author)))
 	}
+
 	// The chip row carries PaddingLeft(1), so its content budget is one column
 	// narrower than the terminal. A non-positive budget (width 0 before the first
 	// resize) disables the clamp in renderLabelChips.
@@ -117,13 +121,14 @@ func (m model) detailHeader() string {
 	if m.width > 0 {
 		chipBudget = m.width - 1
 	}
-	chips := renderLabelChips(m.detailItem.labels, chipBudget)
-	if chips == "" {
-		return titleStyle.Render(title)
+	if chips := renderLabelChips(m.detailItem.labels, chipBudget); chips != "" {
+		rows = append(rows, lipgloss.NewStyle().PaddingLeft(1).Render(chips))
 	}
-	titleStyle = titleStyle.MarginBottom(0)
-	chipRow := lipgloss.NewStyle().PaddingLeft(1).MarginBottom(1).Render(chips)
-	return lipgloss.JoinVertical(lipgloss.Left, titleStyle.Render(title), chipRow)
+
+	// Apply the trailing blank-line separator to whichever row ends up last.
+	last := len(rows) - 1
+	rows[last] = lipgloss.NewStyle().MarginBottom(1).Render(rows[last])
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
 // renderLabelChips renders a row of colored chips, one per label, joined by a
