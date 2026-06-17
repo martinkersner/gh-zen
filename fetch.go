@@ -284,6 +284,7 @@ var fetchIssuesAndPRs = func() tea.Cmd {
 							number
 							title
 							body
+							author { login }
 						}
 					}
 					pullRequests(first: 50, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
@@ -291,6 +292,7 @@ var fetchIssuesAndPRs = func() tea.Cmd {
 							number
 							title
 							body
+							author { login }
 						}
 					}
 				}
@@ -305,6 +307,9 @@ var fetchIssuesAndPRs = func() tea.Cmd {
 			Number int    `json:"number"`
 			Title  string `json:"title"`
 			Body   string `json:"body"`
+			Author struct {
+				Login string `json:"login"`
+			} `json:"author"`
 		}
 		type response struct {
 			Repository struct {
@@ -324,10 +329,10 @@ var fetchIssuesAndPRs = func() tea.Cmd {
 
 		var issues, prs []list.Item
 		for _, n := range resp.Repository.Issues.Nodes {
-			issues = append(issues, item{number: n.Number, title: n.Title, body: n.Body, type_: "issue"})
+			issues = append(issues, item{number: n.Number, title: n.Title, body: n.Body, type_: "issue", author: n.Author.Login})
 		}
 		for _, n := range resp.Repository.PullRequests.Nodes {
-			prs = append(prs, item{number: n.Number, title: n.Title, body: n.Body, type_: "pr"})
+			prs = append(prs, item{number: n.Number, title: n.Title, body: n.Body, type_: "pr", author: n.Author.Login})
 		}
 
 		return dataMsg{issues: issues, prs: prs}

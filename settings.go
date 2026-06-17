@@ -16,6 +16,11 @@ const refreshInterval = 5 * time.Second
 // subtract this so the bar never overlaps scrollable content.
 const statusBarHeight = 1
 
+// rowAuthorGap is the minimum number of blank columns kept between a list row's
+// title and the right-aligned "@author" so the two never visually touch when the
+// title is truncated to make room for the author (see itemDelegate.Render).
+const rowAuthorGap = 1
+
 // loadingIndicator is the unobtrusive marker shown on the left of the status bar
 // while a user-visible fetch is in flight (initial load, manual refresh, or a
 // lazily-fetched detail body). A PR diff fetch uses the diff-specific label

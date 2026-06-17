@@ -104,6 +104,9 @@ func rebuildThemeStyles() {
 	// foreground, so the number prefix didn't visibly stand out. Bold makes it
 	// pop regardless of palette/terminal color fidelity (issue #137).
 	numberStyle = lipgloss.NewStyle().Bold(true).Foreground(accentColor).Inline(true)
+	// authorStyle uses the accent foreground without bold so the right-aligned
+	// "@author" reads as secondary to the bold number prefix.
+	authorStyle = lipgloss.NewStyle().Foreground(accentColor).Inline(true)
 }
 
 // init ensures the derived styles are populated for the default palette before

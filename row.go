@@ -24,7 +24,7 @@ type item struct {
 	title  string
 	body   string
 	type_  string  // "issue" or "pr"
-	author string  // opener's login, populated by the detail fetch (fetchBody)
+	author string  // opener's login, populated by the list fetch and the detail fetch (fetchBody)
 	labels []label // GitHub labels, populated by the detail fetch (fetchBody)
 }
 
@@ -40,6 +40,13 @@ func (i item) Description() string { return "" }
 // so rebuildThemeStyles can refresh it on a palette change; otherwise a theme
 // switch would leave the list prefix in the original accent color.
 var numberStyle lipgloss.Style
+
+// authorStyle is the color applied to the right-aligned "@author" on each list
+// row so it reads as distinct from the title text. Like numberStyle it is a
+// package global (read live by Render) so rebuildThemeStyles refreshes it on a
+// palette change. It currently shares the accent color with numberStyle but is
+// kept separate so the author color can diverge from the number prefix later.
+var authorStyle lipgloss.Style
 
 // itemDelegate renders single-line items. Unlike list.DefaultDelegate it keeps
 // the selected row highlighted while the filter input is active, so ctrl+n/
@@ -88,7 +95,11 @@ func numberPrefixLen(title string) int {
 // filterMatch layered on. Per-rune coloring is done on the inline body and then
 // wrapped in a frame-only copy of rowStyle (foreground unset) so the embedded
 // prefix/match colors survive instead of being flattened by an outer foreground.
-func renderTitle(title string, prefixLen int, matches []int, isFiltered bool, rowStyle, filterMatch, numberStyle lipgloss.Style) string {
+//
+// author (already truncated by the caller, empty to omit) is appended after the
+// title, separated by pad blank columns so it sits right-aligned at the row edge,
+// and colored with authorStyle so it reads as distinct from the title text.
+func renderTitle(title string, prefixLen int, matches []int, isFiltered bool, rowStyle, filterMatch, numberStyle lipgloss.Style, author string, authorStyle lipgloss.Style, pad int) string {
 	base := rowStyle.Inline(true)
 	// number overrides the base foreground with the accent color; Inherit keeps
 	// existing set fields, so clear the foreground first before inheriting it.
@@ -137,6 +148,14 @@ func renderTitle(title string, prefixLen int, matches []int, isFiltered bool, ro
 		b.WriteString(styleFor(cat).Render(string(runes[i:j])))
 		i = j
 	}
+	if author != "" {
+		// authoredStyle layers authorStyle's foreground over base, mirroring how
+		// number is built, so the row frame's other fields survive but the author
+		// gets its own color.
+		authored := base.UnsetForeground().Inherit(authorStyle)
+		b.WriteString(strings.Repeat(" ", pad))
+		b.WriteString(authored.Render(author))
+	}
 	// Frame-only wrapper: keep padding/border from rowStyle but drop its
 	// foreground so the per-rune colors above aren't overridden.
 	frame := rowStyle.UnsetForeground()
@@ -171,19 +190,49 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	case isSelected:
 		rowStyle = s.SelectedTitle
 	}
-	textwidth := m.Width() - rowStyle.GetHorizontalFrameSize()
-	title = ansi.Truncate(title, textwidth, "…")
+	textwidth := max(m.Width()-rowStyle.GetHorizontalFrameSize(), 0)
+
+	// Right-align "@author" (issue #138-style attribution, now per list row). The
+	// author always wins: the title is truncated first to leave room for a
+	// rowAuthorGap-wide gap plus the author, so the author is never dropped — only
+	// truncated itself if it alone would overflow the row. pad is the number of
+	// blank columns between the (possibly truncated) title and the author, sized so
+	// the author sits flush against the right edge.
+	author := ""
+	if it.author != "" {
+		author = "@" + it.author
+	}
+	pad := 0
+	if author != "" {
+		authorWidth := ansi.StringWidth(author)
+		avail := textwidth - authorWidth - rowAuthorGap
+		if avail < 0 {
+			// Author alone is wider than the row: drop the title and truncate the
+			// author so the row still never overflows.
+			author = ansi.Truncate(author, textwidth, "…")
+			title = ""
+		} else {
+			title = ansi.Truncate(title, avail, "…")
+		}
+		pad = max(textwidth-ansi.StringWidth(title)-ansi.StringWidth(author), 0)
+	} else {
+		title = ansi.Truncate(title, textwidth, "…")
+	}
 	prefixLen := numberPrefixLen(title)
 
 	switch {
 	case emptyFilter:
-		// Whole row dimmed (empty filter input); skip the number accent so the
-		// row reads as inactive.
-		title = s.DimmedTitle.Render(title)
+		// Whole row dimmed (empty filter input); skip the number/author accent so
+		// the row reads as inactive.
+		content := title
+		if author != "" {
+			content += strings.Repeat(" ", pad) + author
+		}
+		title = s.DimmedTitle.Render(content)
 	case isSelected:
-		title = renderTitle(title, prefixLen, m.MatchesForItem(index), isFiltered, s.SelectedTitle, s.FilterMatch, numberStyle)
+		title = renderTitle(title, prefixLen, m.MatchesForItem(index), isFiltered, s.SelectedTitle, s.FilterMatch, numberStyle, author, authorStyle, pad)
 	default:
-		title = renderTitle(title, prefixLen, m.MatchesForItem(index), isFiltered, s.NormalTitle, s.FilterMatch, numberStyle)
+		title = renderTitle(title, prefixLen, m.MatchesForItem(index), isFiltered, s.NormalTitle, s.FilterMatch, numberStyle, author, authorStyle, pad)
 	}
 	fmt.Fprint(w, title)
 }
