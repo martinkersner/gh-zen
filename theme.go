@@ -99,7 +99,11 @@ func rebuildThemeStyles() {
 	detailMatchStyle = lipgloss.NewStyle().Background(matchBgColor).Foreground(textColor)
 	detailActiveMatchStyle = lipgloss.NewStyle().Background(highlightColor).Foreground(matchActiveTextColor).Bold(true)
 
-	numberStyle = lipgloss.NewStyle().Foreground(accentColor).Inline(true)
+	// Bold in addition to the accent foreground: the accent alone (a soft pastel
+	// in several palettes) can read as low-contrast against the title's own
+	// foreground, so the number prefix didn't visibly stand out. Bold makes it
+	// pop regardless of palette/terminal color fidelity (issue #137).
+	numberStyle = lipgloss.NewStyle().Bold(true).Foreground(accentColor).Inline(true)
 }
 
 // init ensures the derived styles are populated for the default palette before

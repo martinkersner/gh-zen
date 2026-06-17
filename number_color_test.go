@@ -142,6 +142,16 @@ func TestItemTitleAndDescription(t *testing.T) {
 	}
 }
 
+// The number prefix is bold (issue #137) so it visibly stands out from the
+// title even when the accent foreground reads as low-contrast against the title
+// text. rebuildThemeStyles bakes the bold into the global numberStyle.
+func TestNumberStyleBold(t *testing.T) {
+	rebuildThemeStyles()
+	if !numberStyle.GetBold() {
+		t.Errorf("numberStyle should be bold so the number prefix stands out")
+	}
+}
+
 // stripANSI removes SGR (ESC[...m) escape sequences for plain-text assertions.
 // It only handles m-terminated sequences, which is all lipgloss emits here; it
 // is not a general-purpose terminal escape stripper.
