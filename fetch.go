@@ -57,6 +57,7 @@ type dataMsg struct {
 type bodyMsg struct {
 	key    string
 	body   string
+	author string
 	labels []label
 	err    error
 	// prefetch marks a cheap list-body prefetch (no comments) as opposed to a
@@ -103,14 +104,16 @@ const labelsFetchLimit = 10
 // totalCount), which can exceed the number of comments returned when the thread
 // is longer than commentsFetchLimit; callers use it to surface truncation. The
 // labels carry their GitHub hex color for rendering as chips in the detail view.
-func fetchBody(number int, isPR bool) (string, []comment, int, []label, error) {
+// The returned author is the issue/PR opener's login ("" if GitHub returns a
+// null author, e.g. a deleted account), rendered in the detail header.
+func fetchBody(number int, isPR bool) (string, []comment, int, []label, string, error) {
 	client, err := newGraphQLClient()
 	if err != nil {
-		return "", nil, 0, nil, err
+		return "", nil, 0, nil, "", err
 	}
 	repo, err := currentRepo()
 	if err != nil {
-		return "", nil, 0, nil, err
+		return "", nil, 0, nil, "", err
 	}
 
 	field := "issue"
@@ -122,6 +125,7 @@ func fetchBody(number int, isPR bool) (string, []comment, int, []label, error) {
 			repository(owner: $owner, name: $repo) {
 				%s(number: $number) {
 					body
+					author { login }
 					labels(first: $labels) {
 						nodes {
 							name
@@ -159,6 +163,9 @@ func fetchBody(number int, isPR bool) (string, []comment, int, []label, error) {
 	}
 	type detail struct {
 		Body   string `json:"body"`
+		Author struct {
+			Login string `json:"login"`
+		} `json:"author"`
 		Labels struct {
 			Nodes []labelNode `json:"nodes"`
 		} `json:"labels"`
@@ -175,7 +182,7 @@ func fetchBody(number int, isPR bool) (string, []comment, int, []label, error) {
 	}
 	var resp response
 	if err := client.Do(query, variables, &resp); err != nil {
-		return "", nil, 0, nil, err
+		return "", nil, 0, nil, "", err
 	}
 	d := resp.Repository.Issue
 	if isPR {
@@ -189,7 +196,7 @@ func fetchBody(number int, isPR bool) (string, []comment, int, []label, error) {
 	for _, n := range d.Labels.Nodes {
 		labels = append(labels, label{name: n.Name, color: n.Color})
 	}
-	return d.Body, comments, d.Comments.TotalCount, labels, nil
+	return d.Body, comments, d.Comments.TotalCount, labels, d.Author.Login, nil
 }
 
 // ghDiff shells out to `gh pr diff <number>` and returns its stdout. It is a

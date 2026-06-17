@@ -580,6 +580,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// label slice can't blank a populated chip row.
 			if !msg.prefetch {
 				m.detailItem.labels = msg.labels
+				m.detailItem.author = msg.author
 				m.resizeDetailViewport()
 			}
 			if !m.detailShowDiff {
@@ -695,11 +696,11 @@ func (m model) cmdFetchBody(it *item) tea.Cmd {
 	number := it.number
 	isPR := it.type_ == "pr"
 	return func() tea.Msg {
-		body, comments, total, labels, err := fetchBody(number, isPR)
+		body, comments, total, labels, author, err := fetchBody(number, isPR)
 		if err != nil {
 			return bodyMsg{key: key, err: err}
 		}
-		return bodyMsg{key: key, body: composeDetailBody(body, comments, total), labels: labels}
+		return bodyMsg{key: key, body: composeDetailBody(body, comments, total), labels: labels, author: author}
 	}
 }
 
