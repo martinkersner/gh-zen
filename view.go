@@ -111,7 +111,7 @@ func (m model) detailHeader() string {
 		if m.width > 0 {
 			authorStyle = authorStyle.Width(m.width)
 		}
-		rows = append(rows, authorStyle.Render(fmt.Sprintf("by @%s", m.detailItem.author)))
+		rows = append(rows, authorStyle.Render("@"+m.detailItem.author))
 	}
 
 	// The chip row carries PaddingLeft(1), so its content budget is one column

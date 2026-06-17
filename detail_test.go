@@ -172,7 +172,7 @@ func TestDetailHeaderLeftMargin(t *testing.T) {
 	}
 }
 
-// The detail header surfaces the issue/PR opener's login ("by @author") on its
+// The detail header surfaces the issue/PR opener's login ("@author") on its
 // own row below the title once the fetch has populated it. An item without an
 // author keeps the title-only header (the cheap list body carries no author yet).
 func TestDetailHeaderRendersAuthor(t *testing.T) {
@@ -186,7 +186,7 @@ func TestDetailHeaderRendersAuthor(t *testing.T) {
 	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	hdr := ansi.Strip(tm.(model).detailHeader())
-	if !strings.Contains(hdr, "by @octocat") {
+	if !strings.Contains(hdr, "@octocat") {
 		t.Errorf("detail header missing author attribution:\n%s", hdr)
 	}
 
@@ -198,7 +198,7 @@ func TestDetailHeaderRendersAuthor(t *testing.T) {
 		if strings.Contains(ln, "authored issue") {
 			titleIdx = i
 		}
-		if strings.Contains(ln, "by @octocat") {
+		if strings.Contains(ln, "@octocat") {
 			authorIdx = i
 		}
 	}
@@ -209,11 +209,11 @@ func TestDetailHeaderRendersAuthor(t *testing.T) {
 		t.Errorf("author row (line %d) should be below the title row (line %d):\n%s",
 			authorIdx, titleIdx, hdr)
 	}
-	if strings.Contains(lines[titleIdx], "by @octocat") {
+	if strings.Contains(lines[titleIdx], "@octocat") {
 		t.Errorf("author should not be concatenated onto the title line: %q", lines[titleIdx])
 	}
 
-	// No author set: header shows the title without a "by @" attribution.
+	// No author set: header shows the title without an "@author" attribution.
 	m2 := newModel()
 	m2.issueList.SetItems([]list.Item{
 		item{number: 7, title: "authored issue", body: "b", type_: "issue"},
@@ -223,7 +223,7 @@ func TestDetailHeaderRendersAuthor(t *testing.T) {
 	tm2, _ = tm2.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	tm2, _ = tm2.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	noAuthorHdr := ansi.Strip(tm2.(model).detailHeader())
-	if strings.Contains(noAuthorHdr, "by @") {
+	if strings.Contains(noAuthorHdr, "@") {
 		t.Errorf("no-author header unexpectedly contains an attribution:\n%s", noAuthorHdr)
 	}
 }
@@ -255,7 +255,7 @@ func TestDetailHeaderAuthorMutedColor(t *testing.T) {
 	// accent the title uses.
 	var authorLine string
 	for _, ln := range strings.Split(hdr, "\n") {
-		if strings.Contains(ansi.Strip(ln), "by @octocat") {
+		if strings.Contains(ansi.Strip(ln), "@octocat") {
 			authorLine = ln
 			break
 		}
@@ -289,7 +289,7 @@ func TestBodyMsgPopulatesAuthor(t *testing.T) {
 	if mm.detailItem.author != "octocat" {
 		t.Errorf("detailItem.author = %q, want %q", mm.detailItem.author, "octocat")
 	}
-	if !strings.Contains(ansi.Strip(mm.detailHeader()), "by @octocat") {
+	if !strings.Contains(ansi.Strip(mm.detailHeader()), "@octocat") {
 		t.Errorf("header missing author after bodyMsg:\n%s", ansi.Strip(mm.detailHeader()))
 	}
 }
