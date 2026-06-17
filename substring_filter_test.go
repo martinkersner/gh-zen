@@ -60,6 +60,65 @@ func TestSubstringFilter(t *testing.T) {
 	}
 }
 
+// TestFilterValueIncludesAuthor verifies item.FilterValue() exposes the author
+// login (as "@login") so list search can match by author (issue #143). Both a
+// bare login and the "@login" form match as substrings; the number/title prefix
+// is unchanged.
+func TestFilterValueIncludesAuthor(t *testing.T) {
+	it := item{number: 7, title: "fix the bug", type_: "issue", author: "octocat"}
+	got := it.FilterValue()
+	want := "#7 fix the bug @octocat"
+	if got != want {
+		t.Fatalf("FilterValue() = %q, want %q", got, want)
+	}
+
+	// An authorless row's FilterValue is unchanged (no trailing "@").
+	noAuthor := item{number: 8, title: "other", type_: "issue"}
+	if g := noAuthor.FilterValue(); g != "#8 other" {
+		t.Errorf("authorless FilterValue() = %q, want %q", g, "#8 other")
+	}
+}
+
+// TestSubstringFilterMatchesAuthor verifies that searching by author login (bare
+// or "@login") matches the row via FilterValue(), alongside number/title
+// matching (issue #143).
+func TestSubstringFilterMatchesAuthor(t *testing.T) {
+	items := []item{
+		{number: 1, title: "alpha", type_: "issue", author: "octocat"},
+		{number: 2, title: "beta", type_: "issue", author: "hubot"},
+		{number: 3, title: "gamma", type_: "issue"}, // no author
+	}
+	targets := make([]string, len(items))
+	for i, it := range items {
+		targets[i] = it.FilterValue()
+	}
+
+	tests := []struct {
+		name string
+		term string
+		want []int
+	}{
+		{"bare login", "octocat", []int{0}},
+		{"at-prefixed login", "@octocat", []int{0}},
+		{"login prefix", "hub", []int{1}},
+		{"title still matches", "beta", []int{1}},
+		{"number still matches", "#3", []int{2}},
+		{"unknown author no match", "ghost", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchedIndexSet(tt.term, targets)
+			want := map[int]bool{}
+			for _, i := range tt.want {
+				want[i] = true
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("term %q: got %v, want %v", tt.term, got, want)
+			}
+		})
+	}
+}
+
 // TestSubstringFilterMatchedIndexes verifies matched rune indexes point at the
 // contiguous run where the term occurs, so highlighting lines up.
 func TestSubstringFilterMatchedIndexes(t *testing.T) {
