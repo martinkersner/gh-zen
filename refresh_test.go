@@ -209,7 +209,7 @@ func TestPrefetchDoesNotClobberFullBody(t *testing.T) {
 	// A late prefetch (bare body) arrives afterwards; it must be ignored.
 	tm, _ = tm.Update(bodyMsg{key: key, body: "list body", prefetch: true})
 
-	if got := tm.(model).bodyCache[key]; got != full {
+	if got := tm.(model).bodyCache[key].body; got != full {
 		t.Errorf("prefetch clobbered full body+comments:\n got %q\nwant %q", got, full)
 	}
 }
