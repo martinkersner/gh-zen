@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -320,6 +321,119 @@ func TestFetchIssuesAndPRsQueryError(t *testing.T) {
 	}
 	if !errors.Is(em.err, wantErr) {
 		t.Errorf("err = %v, want %v", em.err, wantErr)
+	}
+}
+
+// --- fetchLabels (batched visible-window prefetch) ---
+
+// A mixed issue+PR batch builds one aliased query and maps each alias's labels
+// back to its bodyCache key.
+func TestFetchLabelsBatchedSuccess(t *testing.T) {
+	fake := &fakeGraphQLClient{
+		respJSON: `{"repository":{
+			"n0":{"labels":{"nodes":[{"name":"bug","color":"d73a4a"}]}},
+			"n1":{"labels":{"nodes":[{"name":"enhancement","color":"a2eeef"},{"name":"wip","color":"fbca04"}]}}
+		}}`,
+	}
+	withFakeGitHub(t, fake, nil, testRepo(), nil)
+
+	targets := []labelTarget{
+		{key: "issue_12", number: 12, isPR: false},
+		{key: "pr_7", number: 7, isPR: true},
+	}
+	got, err := fetchLabels(targets)
+	if err != nil {
+		t.Fatalf("fetchLabels returned error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d keyed results, want 2: %+v", len(got), got)
+	}
+	if l := got["issue_12"]; len(l) != 1 || l[0].name != "bug" || l[0].color != "d73a4a" {
+		t.Errorf("issue_12 labels = %+v", l)
+	}
+	if l := got["pr_7"]; len(l) != 2 || l[0].name != "enhancement" || l[1].name != "wip" {
+		t.Errorf("pr_7 labels = %+v", l)
+	}
+
+	// The query uses aliased issue/pullRequest fields capped at labelsFetchLimit.
+	q := fake.lastQuery()
+	if !strings.Contains(q, "n0: issue(number: 12)") {
+		t.Errorf("query missing aliased issue field:\n%s", q)
+	}
+	if !strings.Contains(q, "n1: pullRequest(number: 7)") {
+		t.Errorf("query missing aliased pullRequest field:\n%s", q)
+	}
+	if !strings.Contains(q, fmt.Sprintf("labels(first: %d)", labelsFetchLimit)) {
+		t.Errorf("query did not cap labels at labelsFetchLimit:\n%s", q)
+	}
+	gotVars := fake.lastVars()
+	if gotVars["owner"] != testRepoOwner || gotVars["repo"] != testRepoName {
+		t.Errorf("owner/repo vars = %v/%v", gotVars["owner"], gotVars["repo"])
+	}
+}
+
+// A target whose payload carries no labels is simply absent from the result map
+// (not a nil/empty entry), so the cache-merge doesn't warm it with nothing.
+func TestFetchLabelsOmitsEmpty(t *testing.T) {
+	fake := &fakeGraphQLClient{
+		respJSON: `{"repository":{
+			"n0":{"labels":{"nodes":[]}},
+			"n1":{"labels":{"nodes":[{"name":"bug","color":"d73a4a"}]}}
+		}}`,
+	}
+	withFakeGitHub(t, fake, nil, testRepo(), nil)
+
+	got, err := fetchLabels([]labelTarget{
+		{key: "issue_1", number: 1},
+		{key: "issue_2", number: 2},
+	})
+	if err != nil {
+		t.Fatalf("fetchLabels returned error: %v", err)
+	}
+	if _, ok := got["issue_1"]; ok {
+		t.Errorf("issue_1 (no labels) should be absent from result, got %+v", got["issue_1"])
+	}
+	if l := got["issue_2"]; len(l) != 1 || l[0].name != "bug" {
+		t.Errorf("issue_2 labels = %+v", l)
+	}
+}
+
+// An empty target slice is a no-op: no client call, nil map, nil error, so the
+// caller needn't special-case an empty on-screen window.
+func TestFetchLabelsEmptyTargets(t *testing.T) {
+	fake := &fakeGraphQLClient{respJSON: `{"repository":{}}`}
+	withFakeGitHub(t, fake, nil, testRepo(), nil)
+
+	got, err := fetchLabels(nil)
+	if err != nil {
+		t.Fatalf("fetchLabels(nil) returned error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("fetchLabels(nil) = %+v, want nil", got)
+	}
+	if fake.lastQuery() != "" {
+		t.Errorf("fetchLabels(nil) issued a query: %q", fake.lastQuery())
+	}
+}
+
+func TestFetchLabelsClientError(t *testing.T) {
+	wantErr := errors.New("no auth token")
+	withFakeGitHub(t, nil, wantErr, testRepo(), nil)
+
+	_, err := fetchLabels([]labelTarget{{key: "issue_1", number: 1}})
+	if !errors.Is(err, wantErr) {
+		t.Errorf("err = %v, want %v", err, wantErr)
+	}
+}
+
+func TestFetchLabelsQueryError(t *testing.T) {
+	wantErr := errors.New("graphql: rate limited")
+	fake := &fakeGraphQLClient{err: wantErr}
+	withFakeGitHub(t, fake, nil, testRepo(), nil)
+
+	_, err := fetchLabels([]labelTarget{{key: "issue_1", number: 1}})
+	if !errors.Is(err, wantErr) {
+		t.Errorf("err = %v, want %v", err, wantErr)
 	}
 }
 
