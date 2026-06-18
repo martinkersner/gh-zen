@@ -13,7 +13,8 @@ import (
 // label shown in the settings menu.
 type Palette struct {
 	Name            string
-	Accent          lipgloss.AdaptiveColor // active tabs, titles, number prefix, key hints, diff meta lines.
+	Accent          lipgloss.AdaptiveColor // active tabs, titles, list number prefix, key hints, diff meta lines.
+	Number          lipgloss.AdaptiveColor // detail-header "#<number>" prefix — a distinct "fun" accent, separate from Accent.
 	Muted           lipgloss.AdaptiveColor // inactive tabs, status bar, borders, diff context.
 	DiffAdd         lipgloss.AdaptiveColor // added lines in diffs.
 	DiffDel         lipgloss.AdaptiveColor // removed lines in diffs.
@@ -51,6 +52,7 @@ var paletteMu sync.RWMutex
 // default), preserved exactly so the default dark appearance does not drift.
 var (
 	accentColor          = tokyoNight.Accent
+	numberColor          = tokyoNight.Number
 	mutedColor           = tokyoNight.Muted
 	diffAddColor         = tokyoNight.DiffAdd
 	diffDelColor         = tokyoNight.DiffDel
@@ -68,6 +70,7 @@ func applyPalette(p Palette) {
 	paletteMu.Lock()
 	defer paletteMu.Unlock()
 	accentColor = p.Accent
+	numberColor = p.Number
 	mutedColor = p.Muted
 	diffAddColor = p.DiffAdd
 	diffDelColor = p.DiffDel
@@ -104,6 +107,11 @@ func rebuildThemeStyles() {
 	// foreground, so the number prefix didn't visibly stand out. Bold makes it
 	// pop regardless of palette/terminal color fidelity (issue #137).
 	numberStyle = lipgloss.NewStyle().Bold(true).Foreground(accentColor).Inline(true)
+	// detailNumberStyle colors the detail-header "#<number>" prefix in the
+	// palette's distinct "fun" Number color (issue #149) so the number stands out
+	// from the bold-accent title text rather than blending into it. Bold like the
+	// title so it reads as a prominent prefix, but with its own foreground.
+	detailNumberStyle = lipgloss.NewStyle().Bold(true).Foreground(numberColor).Inline(true)
 	// authorStyle uses the accent foreground without bold so the right-aligned
 	// "@author" reads as secondary to the bold number prefix.
 	authorStyle = lipgloss.NewStyle().Foreground(accentColor).Inline(true)
@@ -122,6 +130,7 @@ func init() {
 var tokyoNight = Palette{
 	Name:            "Tokyo Night",
 	Accent:          lipgloss.AdaptiveColor{Light: "#2e7de9", Dark: "#7aa2f7"},
+	Number:          lipgloss.AdaptiveColor{Light: "#b15c00", Dark: "#ff9e64"}, // Tokyo Night orange — playful vs. the blue accent.
 	Muted:           lipgloss.AdaptiveColor{Light: "#8990b3", Dark: "#565f89"},
 	DiffAdd:         lipgloss.AdaptiveColor{Light: "#587539", Dark: "#9ece6a"},
 	DiffDel:         lipgloss.AdaptiveColor{Light: "#f52a65", Dark: "#f7768e"},
@@ -145,6 +154,7 @@ var tokyoNightLightFallback = tokyoNight // alias for documenting the fallback s
 var catppuccinMocha = Palette{
 	Name:            "Catppuccin Mocha",
 	Accent:          lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.Accent.Light, Dark: "#89b4fa"},
+	Number:          lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.Number.Light, Dark: "#f9e2af"}, // Mocha yellow — fun vs. the blue accent.
 	Muted:           lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.Muted.Light, Dark: "#585b70"},
 	DiffAdd:         lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.DiffAdd.Light, Dark: "#a6e3a1"},
 	DiffDel:         lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.DiffDel.Light, Dark: "#f38ba8"},
@@ -161,6 +171,7 @@ var catppuccinMocha = Palette{
 var dracula = Palette{
 	Name:            "Dracula",
 	Accent:          lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.Accent.Light, Dark: "#bd93f9"},
+	Number:          lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.Number.Light, Dark: "#ff79c6"}, // Dracula pink — playful vs. the purple accent.
 	Muted:           lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.Muted.Light, Dark: "#6272a4"},
 	DiffAdd:         lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.DiffAdd.Light, Dark: "#50fa7b"},
 	DiffDel:         lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.DiffDel.Light, Dark: "#ff5555"},
@@ -178,6 +189,7 @@ var dracula = Palette{
 var synthwave = Palette{
 	Name:            "Synthwave",
 	Accent:          lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.Accent.Light, Dark: "#ff7edb"},
+	Number:          lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.Number.Light, Dark: "#fede5d"}, // Synthwave neon yellow — fun vs. the neon-pink accent.
 	Muted:           lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.Muted.Light, Dark: "#848bbd"},
 	DiffAdd:         lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.DiffAdd.Light, Dark: "#72f1b8"},
 	DiffDel:         lipgloss.AdaptiveColor{Light: tokyoNightLightFallback.DiffDel.Light, Dark: "#fe4450"},

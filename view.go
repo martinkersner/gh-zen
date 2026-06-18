@@ -8,6 +8,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// detailNumberStyle colors the detail-header "#<number>" prefix in the palette's
+// distinct "fun" Number color (issue #149), separate from the bold-accent title
+// text. It is a package global (read live by detailHeader) so rebuildThemeStyles
+// refreshes it on a palette switch, mirroring row.go's numberStyle.
+var detailNumberStyle lipgloss.Style
+
 func (m model) View() string {
 	// The whole render reads the palette globals/derived styles (theme.go),
 	// which applyPalette mutates from Update. Hold the read lock for the entire
@@ -80,9 +86,18 @@ func (m model) detailHeader() string {
 	if m.detailItem == nil {
 		return ""
 	}
+	// The title block is a width-constrained, padded frame wrapping an inline
+	// body. The body splits the "#<number>" prefix (rendered in the distinct
+	// "fun" Number color, issue #149) from the title text (the bold accent), so
+	// the number stands out instead of blending into the title. The frame carries
+	// no foreground so the per-segment colors below survive (mirrors row.go's
+	// frame-only wrapper). Width/padding live on the frame; the inline segments
+	// must be Inline(true) so they don't re-pad.
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(accentColor).
+		Inline(true)
+	frameStyle := lipgloss.NewStyle().
 		// Indent to column 1 so the title lines up with list items
 		// (NormalTitle PaddingLeft(1)) and the rest of the app.
 		PaddingLeft(1)
@@ -91,16 +106,18 @@ func (m model) detailHeader() string {
 	// zero columns. lipgloss subtracts PaddingLeft from this Width, so the
 	// rendered block (padding + content) still fits the terminal exactly.
 	if m.width > 0 {
-		titleStyle = titleStyle.Width(m.width)
+		frameStyle = frameStyle.Width(m.width)
 	}
-	title := fmt.Sprintf("#%d %s", m.detailItem.number, m.detailItem.title)
+	numberPrefix := fmt.Sprintf("#%d", m.detailItem.number)
+	titleBody := detailNumberStyle.Render(numberPrefix) + titleStyle.Render(" "+m.detailItem.title)
+	title := frameStyle.Render(titleBody)
 
 	// The header is a vertical stack of rows: the title, an optional author row,
 	// and an optional label chip row. The last row carries MarginBottom(1) so a
 	// single blank separator line sits below the whole block (this row counts
 	// toward lipgloss.Height(detailHeader()), keeping the viewport sizing
 	// correct); all preceding rows carry no bottom margin.
-	rows := []string{titleStyle.Render(title)}
+	rows := []string{title}
 
 	// Surface the opener's login on its own row below the title once the detail
 	// fetch has populated it (the cheap list/prefetch item carries no author).

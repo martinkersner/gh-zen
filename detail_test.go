@@ -271,6 +271,70 @@ func TestDetailHeaderAuthorMutedColor(t *testing.T) {
 	}
 }
 
+// The detail-header "#<number>" prefix renders in its own distinct "fun" Number
+// color (issue #149), separate from the bold-accent title text. We assert the
+// number's SGR sequence differs from the title's SGR: the number carries the
+// Number color and not the accent, and the title body carries the accent and not
+// the Number color.
+func TestDetailHeaderNumberDistinctColor(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	// Truecolor SGR sequences lipgloss emits for the default (Tokyo Night dark)
+	// accent (#7aa2f7, the title) and Number (#ff9e64, the "#<n>" prefix) colors.
+	const accentSGR = "38;2;121;162;247"
+	const numberSGR = "38;2;255;158;100"
+
+	if accentSGR == numberSGR {
+		t.Fatal("test setup: number and accent SGR must differ")
+	}
+
+	m := newModel()
+	m.issueList.SetItems([]list.Item{
+		item{number: 123, title: "distinct number color", body: "b", type_: "issue"},
+	})
+	m.loading = false
+
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	hdr := tm.(model).detailHeader()
+
+	titleLine := strings.SplitN(hdr, "\n", 2)[0]
+	if !strings.Contains(ansi.Strip(titleLine), "#123 distinct number color") {
+		t.Fatalf("title line missing expected text:\n%q", titleLine)
+	}
+
+	// The "#123" prefix must carry the Number color, not the accent.
+	if !strings.Contains(titleLine, numberSGR) {
+		t.Errorf("title line missing the Number-color SGR %q:\n%q", numberSGR, titleLine)
+	}
+
+	// Split the line right after the "#123" prefix text so we can assert each
+	// region's color independently. The prefix region is the "#123" run; the body
+	// region is the accent-styled " distinct number color" that follows.
+	num := strings.Index(titleLine, "#123")
+	if num < 0 {
+		t.Fatalf("number prefix not found in line:\n%q", titleLine)
+	}
+	splitAt := num + len("#123")
+	prefixRegion := titleLine[:splitAt]
+	bodyRegion := titleLine[splitAt:]
+
+	// Number color confined to the prefix; the accent must not appear there.
+	if strings.Contains(prefixRegion, accentSGR) {
+		t.Errorf("accent color leaked into the number prefix region:\n%q", prefixRegion)
+	}
+	// Title body carries the accent and not the Number color.
+	if !strings.Contains(bodyRegion, accentSGR) {
+		t.Errorf("title body missing the accent SGR %q:\n%q", accentSGR, bodyRegion)
+	}
+	if strings.Contains(bodyRegion, numberSGR) {
+		t.Errorf("Number color leaked into the title body region:\n%q", bodyRegion)
+	}
+}
+
 // The author flows from a full body fetch (bodyMsg) onto the open detail item so
 // the header reflects the fetched opener login.
 func TestBodyMsgPopulatesAuthor(t *testing.T) {

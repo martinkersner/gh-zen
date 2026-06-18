@@ -25,6 +25,7 @@ func TestPaletteRegistry(t *testing.T) {
 		}
 		roles := map[string][2]string{
 			"Accent":          {p.Accent.Light, p.Accent.Dark},
+			"Number":          {p.Number.Light, p.Number.Dark},
 			"Muted":           {p.Muted.Light, p.Muted.Dark},
 			"DiffAdd":         {p.DiffAdd.Light, p.DiffAdd.Dark},
 			"DiffDel":         {p.DiffDel.Light, p.DiffDel.Dark},
@@ -124,6 +125,9 @@ func TestApplyPaletteRebuildsStyles(t *testing.T) {
 	}
 	if numberStyle.GetForeground() != lipgloss.AdaptiveColor(dracula.Accent) {
 		t.Errorf("numberStyle not rebuilt: fg = %v, want %v", numberStyle.GetForeground(), dracula.Accent)
+	}
+	if detailNumberStyle.GetForeground() != lipgloss.AdaptiveColor(dracula.Number) {
+		t.Errorf("detailNumberStyle not rebuilt: fg = %v, want %v", detailNumberStyle.GetForeground(), dracula.Number)
 	}
 	if detailActiveMatchStyle.GetBackground() != lipgloss.AdaptiveColor(dracula.Highlight) {
 		t.Errorf("detailActiveMatchStyle not rebuilt: bg = %v, want %v", detailActiveMatchStyle.GetBackground(), dracula.Highlight)
