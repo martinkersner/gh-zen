@@ -505,12 +505,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(cur.VisibleItems()) > 0 {
 				cur.Select(0)
 			}
+			// A jump can change the on-screen page; prefetch its labels (no-op
+			// when the window didn't move or is already cached).
+			if cur.Paginator.Page != prevPage {
+				return m, m.cmdPrefetchLabels()
+			}
 			return m, nil
 		case "G":
 			// Jump the selection to the last item.
 			cur := m.currentList()
 			if n := len(cur.VisibleItems()); n > 0 {
 				cur.Select(n - 1)
+			}
+			// A jump to the last item can land on a new page; prefetch its labels.
+			if cur.Paginator.Page != prevPage {
+				return m, m.cmdPrefetchLabels()
 			}
 			return m, nil
 		case "enter":

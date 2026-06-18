@@ -335,6 +335,41 @@ func TestCmdPrefetchLabelsTargetsVisibleUncached(t *testing.T) {
 	}
 }
 
+// Jumping to the last item (G) onto a new page triggers a labels prefetch for
+// that page's on-screen window. Regression for the page-change wiring.
+func TestPageJumpPrefetchesNewWindow(t *testing.T) {
+	fake := &fakeGraphQLClient{respJSON: `{"repository":{}}`}
+	withFakeGitHub(t, fake, nil, testRepo(), nil)
+
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: mkItems(60, "issue")})
+
+	// Sanity: a 60-item list must paginate at this height, else the jump can't
+	// change pages and the assertion below would be vacuous.
+	if tm.(model).issueList.Paginator.TotalPages <= 1 {
+		t.Skip("list did not paginate at this size; nothing to assert")
+	}
+
+	startPage := tm.(model).issueList.Paginator.Page
+	tm, cmd := tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
+	if tm.(model).issueList.Paginator.Page == startPage {
+		t.Fatal("G did not change the page")
+	}
+	if cmd == nil {
+		t.Fatal("expected a labels prefetch cmd after a page jump")
+	}
+	if _, ok := cmd().(labelsMsg); !ok {
+		t.Fatalf("expected labelsMsg from page-jump prefetch, got %T", cmd())
+	}
+	// The query should target a last-page item (high number), not a first-page
+	// one (#1). mkItems numbers items 1..60 in order.
+	if q := fake.lastQuery(); strings.Contains(q, "issue(number: 1)") && !strings.Contains(q, "issue(number: 60)") {
+		t.Errorf("page-jump prefetch queried the first page, not the last:\n%s", q)
+	}
+}
+
 // A refresh (dataMsg) delivered while a filter is applied must recompute the
 // filtered/visible set so the visible list reflects the new items, and the
 // restored selection must land on the correct visible row. Regression for the
