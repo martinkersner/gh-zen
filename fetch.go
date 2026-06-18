@@ -73,6 +73,26 @@ type diffMsg struct {
 	err  error
 }
 
+// labelTarget identifies one issue/PR whose labels the visible-window prefetch
+// should pull. number is the issue/PR number; isPR selects the aliased
+// pullRequest vs issue field in the batched query (see fetchLabels). key is the
+// bodyCache key (cacheKey) the merged labels are stored under.
+type labelTarget struct {
+	key    string
+	number int
+	isPR   bool
+}
+
+// labelsMsg carries the result of a batched visible-window label prefetch:
+// bodyCache keys mapped to the labels pulled for them. It is merged into the
+// body cache (and the list items) without clobbering a full fetch's labels (see
+// the labelsMsg handler). A failed batch is silently dropped (err) since the
+// per-item detail fetch still pulls labels on open.
+type labelsMsg struct {
+	labels map[string][]label
+	err    error
+}
+
 type errMsg struct {
 	err error
 }
@@ -197,6 +217,85 @@ func fetchBody(number int, isPR bool) (string, []comment, int, []label, string, 
 		labels = append(labels, label{name: n.Name, color: n.Color})
 	}
 	return d.Body, comments, d.Comments.TotalCount, labels, d.Author.Login, nil
+}
+
+// fetchLabels pulls just the labels for a batch of issues/PRs in a single
+// GraphQL round-trip, using aliased issue(number:)/pullRequest(number:) fields
+// (n0, n1, ...). It backs the scroll-aware visible-window prefetch (model.go) so
+// the first open of an on-screen item renders its label chips from cache rather
+// than waiting on the per-item detail fetch. It is a blocking call meant to run
+// inside a tea.Cmd.
+//
+// The returned map is keyed by each target's bodyCache key (cacheKey form) so
+// the caller can merge it straight into bodyCache. Targets with no labels are
+// simply absent from the map. An empty targets slice is a no-op (nil map, nil
+// error) so the caller needn't special-case an empty visible window.
+func fetchLabels(targets []labelTarget) (map[string][]label, error) {
+	if len(targets) == 0 {
+		return nil, nil
+	}
+	client, err := newGraphQLClient()
+	if err != nil {
+		return nil, err
+	}
+	repo, err := currentRepo()
+	if err != nil {
+		return nil, err
+	}
+
+	// Build one aliased selection per target: nN: issue|pullRequest(number: N).
+	var b strings.Builder
+	b.WriteString("query($owner: String!, $repo: String!) {\n")
+	b.WriteString("\trepository(owner: $owner, name: $repo) {\n")
+	for i, t := range targets {
+		field := "issue"
+		if t.isPR {
+			field = "pullRequest"
+		}
+		fmt.Fprintf(&b, "\t\tn%d: %s(number: %d) { labels(first: %d) { nodes { name color } } }\n", i, field, t.number, labelsFetchLimit)
+	}
+	b.WriteString("\t}\n}")
+	query := b.String()
+	variables := map[string]interface{}{
+		"owner": repo.Owner,
+		"repo":  repo.Name,
+	}
+
+	// The aliased fields share the same shape, so unmarshal the repository object
+	// into a generic alias->detail map and pull each target's labels back out by
+	// its alias.
+	type labelNode struct {
+		Name  string `json:"name"`
+		Color string `json:"color"`
+	}
+	type aliased struct {
+		Labels struct {
+			Nodes []labelNode `json:"nodes"`
+		} `json:"labels"`
+	}
+	type response struct {
+		Repository map[string]aliased `json:"repository"`
+	}
+	var resp response
+	if err := client.Do(query, variables, &resp); err != nil {
+		return nil, err
+	}
+
+	out := make(map[string][]label)
+	for i, t := range targets {
+		a, ok := resp.Repository[fmt.Sprintf("n%d", i)]
+		if !ok {
+			continue
+		}
+		var labels []label
+		for _, n := range a.Labels.Nodes {
+			labels = append(labels, label{name: n.Name, color: n.Color})
+		}
+		if labels != nil {
+			out[t.key] = labels
+		}
+	}
+	return out, nil
 }
 
 // ghDiff shells out to `gh pr diff <number>` and returns its stdout. It is a
