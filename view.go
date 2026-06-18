@@ -162,10 +162,7 @@ func renderMetaRow(author string, labels []label, width int) string {
 	// author always wins the space and the row never overflows.
 	chipBudget := width
 	if chipBudget > 0 && left != "" {
-		chipBudget = chipBudget - lipgloss.Width(left) - 1
-		if chipBudget < 0 {
-			chipBudget = 0
-		}
+		chipBudget = max(chipBudget-lipgloss.Width(left)-1, 0)
 	}
 	right := renderLabelChips(labels, chipBudget)
 
@@ -186,10 +183,7 @@ func renderMetaRow(author string, labels []label, width int) string {
 		// Both present: author left, chips flush right, gap filled between. A
 		// non-positive budget (or one too narrow to separate them) falls back to a
 		// single-space join so nothing is dropped.
-		pad := width - lipgloss.Width(left) - lipgloss.Width(right)
-		if pad < 1 {
-			pad = 1
-		}
+		pad := max(width-lipgloss.Width(left)-lipgloss.Width(right), 1)
 		return left + strings.Repeat(" ", pad) + right
 	}
 }
