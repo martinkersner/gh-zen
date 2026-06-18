@@ -685,3 +685,116 @@ func TestDetailHeaderLabelChipsWidthClamped(t *testing.T) {
 		}
 	}
 }
+
+// --- metadata row (author + labels on one justified line, issue #153) ---
+
+// metaRowLine returns the single header line carrying the "@author" (with a
+// non-empty author the metadata row always contains it). Fails the test if no
+// such line is found.
+func metaRowLine(t *testing.T, hdr, author string) string {
+	t.Helper()
+	for _, ln := range strings.Split(hdr, "\n") {
+		if strings.Contains(ansi.Strip(ln), "@"+author) {
+			return ln
+		}
+	}
+	t.Fatalf("metadata row with @%s not found in header:\n%s", author, ansi.Strip(hdr))
+	return ""
+}
+
+// With both an author and labels, the detail header puts them on a single row:
+// the "@author" left-aligned, the label chips right-aligned, flush to the row's
+// right edge (issue #153).
+func TestDetailHeaderAuthorAndLabelsSameRow(t *testing.T) {
+	m := newModel()
+	m.issueList.SetItems([]list.Item{
+		item{number: 7, title: "meta row", body: "b", type_: "issue", author: "octocat",
+			labels: []label{{name: "bug", color: "d73a4a"}}},
+	})
+	m.loading = false
+
+	const w = 80
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: w, Height: 24})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	hdr := tm.(model).detailHeader()
+
+	row := ansi.Strip(metaRowLine(t, hdr, "octocat"))
+	// The chip must share the author's line, not sit on a separate row.
+	if !strings.Contains(row, "bug") {
+		t.Errorf("author and labels should share one row, got author row: %q", row)
+	}
+	// Author left, chip right: the "@octocat" precedes "bug" on the line.
+	ai := strings.Index(row, "@octocat")
+	bi := strings.Index(row, "bug")
+	if ai < 0 || bi < 0 || ai >= bi {
+		t.Errorf("expected @octocat left of the bug chip on the row: %q", row)
+	}
+	// Right-aligned: the chip ends flush at the right edge (the row, including the
+	// PaddingLeft(1), spans the full terminal width).
+	if got := lipgloss.Width(row); got != w {
+		t.Errorf("metadata row width %d, want full terminal width %d:\n%q", got, w, row)
+	}
+	if strings.HasSuffix(strings.TrimRight(row, " "), "bug") == false {
+		t.Errorf("chip not flush to the right edge: %q", strings.TrimRight(row, " "))
+	}
+}
+
+// renderMetaRow with labels but no author right-aligns the chips within the
+// budget (degrading gracefully when the author segment is absent).
+func TestRenderMetaRowLabelsOnlyRightAligned(t *testing.T) {
+	const width = 40
+	row := renderMetaRow("", []label{{name: "bug", color: "d73a4a"}}, width)
+	plain := ansi.Strip(row)
+	if !strings.Contains(plain, "bug") {
+		t.Fatalf("labels-only meta row missing chip: %q", plain)
+	}
+	if lipgloss.Width(row) != width {
+		t.Errorf("labels-only row width %d, want %d (right-aligned to budget): %q",
+			lipgloss.Width(row), width, plain)
+	}
+	if !strings.HasPrefix(plain, " ") {
+		t.Errorf("expected leading padding before the right-aligned chip: %q", plain)
+	}
+}
+
+// renderMetaRow with an author but no labels returns just the left-aligned
+// "@author" (no trailing padding), matching the standalone author row's prior
+// look.
+func TestRenderMetaRowAuthorOnly(t *testing.T) {
+	row := renderMetaRow("octocat", nil, 40)
+	plain := ansi.Strip(row)
+	if plain != "@octocat" {
+		t.Errorf("author-only meta row = %q, want %q", plain, "@octocat")
+	}
+}
+
+// renderMetaRow with neither author nor labels returns "" so the header collapses
+// to the title-only layout.
+func TestRenderMetaRowEmpty(t *testing.T) {
+	if got := renderMetaRow("", nil, 40); got != "" {
+		t.Errorf("empty meta row = %q, want empty", got)
+	}
+}
+
+// A narrow row with both author and labels still fits within the budget: the
+// author wins its space and the chips clamp (with a "+N" marker) into what's
+// left, with no overflow and no wrap.
+func TestRenderMetaRowNarrowClamps(t *testing.T) {
+	labels := []label{
+		{name: "needs-triage", color: "d73a4a"},
+		{name: "enhancement", color: "0075ca"},
+		{name: "documentation", color: "0e8a16"},
+	}
+	const width = 24
+	row := renderMetaRow("octocat", labels, width)
+	if strings.Contains(row, "\n") {
+		t.Errorf("narrow meta row wrapped to multiple lines:\n%q", row)
+	}
+	if w := lipgloss.Width(row); w > width {
+		t.Errorf("narrow meta row width %d exceeds budget %d:\n%q", w, width, ansi.Strip(row))
+	}
+	if !strings.Contains(ansi.Strip(row), "@octocat") {
+		t.Errorf("author dropped from narrow meta row: %q", ansi.Strip(row))
+	}
+}

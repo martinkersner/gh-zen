@@ -112,40 +112,80 @@ func (m model) detailHeader() string {
 	titleBody := detailNumberStyle.Render(numberPrefix) + titleStyle.Render(" "+m.detailItem.title)
 	title := frameStyle.Render(titleBody)
 
-	// The header is a vertical stack of rows: the title, an optional author row,
-	// and an optional label chip row. The last row carries MarginBottom(1) so a
+	// The header is a vertical stack of rows: the title and an optional metadata
+	// row carrying the opener's login (left) and the label chips (right) on one
+	// justified line (issue #153). The last row carries MarginBottom(1) so a
 	// single blank separator line sits below the whole block (this row counts
 	// toward lipgloss.Height(detailHeader()), keeping the viewport sizing
 	// correct); all preceding rows carry no bottom margin.
 	rows := []string{title}
 
-	// Surface the opener's login on its own row below the title once the detail
-	// fetch has populated it (the cheap list/prefetch item carries no author).
-	// Rendered in the muted color so it reads as secondary to the bold accent
-	// title rather than blending into it. Omitted entirely when empty.
-	if m.detailItem.author != "" {
-		authorStyle := lipgloss.NewStyle().Foreground(mutedColor).PaddingLeft(1)
-		if m.width > 0 {
-			authorStyle = authorStyle.Width(m.width)
-		}
-		rows = append(rows, authorStyle.Render("@"+m.detailItem.author))
-	}
-
-	// The chip row carries PaddingLeft(1), so its content budget is one column
+	// The metadata row carries PaddingLeft(1), so its content budget is one column
 	// narrower than the terminal. A non-positive budget (width 0 before the first
-	// resize) disables the clamp in renderLabelChips.
-	chipBudget := 0
+	// resize) disables clamping/justification (renderMetaRow then lays the
+	// segments out at their natural width).
+	rowWidth := 0
 	if m.width > 0 {
-		chipBudget = m.width - 1
+		rowWidth = m.width - 1
 	}
-	if chips := renderLabelChips(m.detailItem.labels, chipBudget); chips != "" {
-		rows = append(rows, lipgloss.NewStyle().PaddingLeft(1).Render(chips))
+	if meta := renderMetaRow(m.detailItem.author, m.detailItem.labels, rowWidth); meta != "" {
+		rows = append(rows, lipgloss.NewStyle().PaddingLeft(1).Render(meta))
 	}
 
 	// Apply the trailing blank-line separator to whichever row ends up last.
 	last := len(rows) - 1
 	rows[last] = lipgloss.NewStyle().MarginBottom(1).Render(rows[last])
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// renderMetaRow lays the opener's login and the label chips onto a single
+// justified row for the detail header (issue #153): the "@author" is left-aligned
+// and styled muted (so it reads as secondary to the bold accent title), the label
+// chips are right-aligned, and the gap between them is filled with spaces so the
+// chips sit flush against the right edge. Returns "" when both segments are empty
+// so the header collapses to the title-only layout unchanged.
+//
+// width is the displayed-column budget for the row content (the caller adds
+// PaddingLeft(1), so it passes m.width-1). The chips get whatever the author and
+// a one-column gap leave of that budget, so a long login can't push the chips off
+// the row (renderLabelChips clamps them with a "+N" overflow marker). With only
+// labels present they still right-align; with only an author present it sits at
+// the left as before. A width <= 0 (no resize yet) disables justification and the
+// chip clamp, rendering author then chips at their natural width.
+func renderMetaRow(author string, labels []label, width int) string {
+	left := ""
+	if author != "" {
+		left = lipgloss.NewStyle().Foreground(mutedColor).Render("@" + author)
+	}
+
+	// Chips get the budget left after the author and a single-column gap, so the
+	// author always wins the space and the row never overflows.
+	chipBudget := width
+	if chipBudget > 0 && left != "" {
+		chipBudget = max(chipBudget-lipgloss.Width(left)-1, 0)
+	}
+	right := renderLabelChips(labels, chipBudget)
+
+	switch {
+	case left == "" && right == "":
+		return ""
+	case right == "":
+		// Author only: left-aligned, as the standalone author row was before.
+		return left
+	case left == "":
+		// Labels only: right-align them within the budget.
+		pad := width - lipgloss.Width(right)
+		if pad < 1 {
+			return right
+		}
+		return strings.Repeat(" ", pad) + right
+	default:
+		// Both present: author left, chips flush right, gap filled between. A
+		// non-positive budget (or one too narrow to separate them) falls back to a
+		// single-space join so nothing is dropped.
+		pad := max(width-lipgloss.Width(left)-lipgloss.Width(right), 1)
+		return left + strings.Repeat(" ", pad) + right
+	}
 }
 
 // renderLabelChips renders a row of colored chips, one per label, joined by a
