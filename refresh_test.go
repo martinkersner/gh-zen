@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -211,6 +212,126 @@ func TestPrefetchDoesNotClobberFullBody(t *testing.T) {
 
 	if got := tm.(model).bodyCache[key].body; got != full {
 		t.Errorf("prefetch clobbered full body+comments:\n got %q\nwant %q", got, full)
+	}
+}
+
+// A labels prefetch warms bodyCache[key].labels for an entry that has none yet
+// (e.g. a bare body prefetch), so a subsequent detail-enter renders chips from
+// cache.
+func TestLabelsPrefetchWarmsEmptyEntry(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	key := "issue_1"
+	// Seed a bare prefetch entry (body only, labels nil) as the body path would.
+	tm, _ = tm.Update(bodyMsg{key: key, body: "list body", prefetch: true})
+
+	want := []label{{name: "bug", color: "d73a4a"}}
+	tm, _ = tm.Update(labelsMsg{labels: map[string][]label{key: want}})
+
+	e := tm.(model).bodyCache[key]
+	if e.body != "list body" {
+		t.Errorf("labels prefetch dropped the cached body: %q", e.body)
+	}
+	if len(e.labels) != 1 || e.labels[0].name != "bug" || e.labels[0].color != "d73a4a" {
+		t.Errorf("labels not warmed into entry: %+v", e.labels)
+	}
+}
+
+// A labels prefetch must never clobber a full fetch's labels (which arrive with
+// the body's rendered comments and author): once an entry carries labels, a
+// later batched prefetch leaves them — and the body+author — untouched.
+func TestLabelsPrefetchDoesNotClobberFullFetch(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	key := "issue_1"
+	full := composeDetailBody("real body", []comment{{author: "alice", body: "hi"}}, 1)
+	fullLabels := []label{{name: "good first issue", color: "7057ff"}}
+	// Full fetch lands first: body+comments, labels, author all populated.
+	tm, _ = tm.Update(bodyMsg{key: key, body: full, labels: fullLabels, author: "octocat"})
+
+	// A late batched label prefetch with different labels must be ignored.
+	tm, _ = tm.Update(labelsMsg{labels: map[string][]label{
+		key: {{name: "stale", color: "000000"}},
+	}})
+
+	e := tm.(model).bodyCache[key]
+	if e.body != full {
+		t.Errorf("label prefetch clobbered full body+comments:\n got %q\nwant %q", e.body, full)
+	}
+	if e.author != "octocat" {
+		t.Errorf("label prefetch dropped author: %q", e.author)
+	}
+	if len(e.labels) != 1 || e.labels[0].name != "good first issue" {
+		t.Errorf("label prefetch clobbered full-fetch labels: %+v", e.labels)
+	}
+}
+
+// A failed labels prefetch is dropped silently, leaving the cache untouched (the
+// per-item detail fetch still pulls labels on open).
+func TestLabelsPrefetchErrorIsIgnored(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	key := "issue_1"
+	tm, _ = tm.Update(bodyMsg{key: key, body: "list body", prefetch: true})
+
+	tm, _ = tm.Update(labelsMsg{err: errFake{}})
+
+	e := tm.(model).bodyCache[key]
+	if e.body != "list body" {
+		t.Errorf("failed label prefetch disturbed the cache: %q", e.body)
+	}
+	if e.labels != nil {
+		t.Errorf("failed label prefetch warmed labels: %+v", e.labels)
+	}
+}
+
+// cmdPrefetchLabels batches a query for the on-screen items that aren't cached
+// yet, and returns nil when there's nothing to fetch (empty list, all cached).
+func TestCmdPrefetchLabelsTargetsVisibleUncached(t *testing.T) {
+	fake := &fakeGraphQLClient{respJSON: `{"repository":{"n0":{"labels":{"nodes":[{"name":"bug","color":"d73a4a"}]}}}}`}
+	withFakeGitHub(t, fake, nil, testRepo(), nil)
+
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: []list.Item{
+		item{number: 11, title: "a", type_: "issue"},
+		item{number: 12, title: "b", type_: "issue"},
+	}})
+
+	// Pre-cache #12's labels so only #11 should be fetched.
+	mm := tm.(model)
+	mm.bodyCache["issue_12"] = bodyEntry{labels: []label{{name: "x", color: "y"}}}
+
+	cmd := mm.cmdPrefetchLabels()
+	if cmd == nil {
+		t.Fatal("expected a prefetch cmd for the uncached visible item")
+	}
+	msg, ok := cmd().(labelsMsg)
+	if !ok {
+		t.Fatalf("expected labelsMsg, got %T", cmd())
+	}
+	if msg.err != nil {
+		t.Fatalf("prefetch returned error: %v", msg.err)
+	}
+	q := fake.lastQuery()
+	if !strings.Contains(q, "issue(number: 11)") {
+		t.Errorf("uncached visible item #11 not in batched query:\n%s", q)
+	}
+	if strings.Contains(q, "number: 12") {
+		t.Errorf("already-cached item #12 should not be in the query:\n%s", q)
+	}
+
+	// With every visible item now cached, the cmd is a no-op (nil).
+	mm.bodyCache["issue_11"] = bodyEntry{labels: []label{{name: "bug", color: "d73a4a"}}}
+	if got := mm.cmdPrefetchLabels(); got != nil {
+		t.Error("expected nil cmd when all visible items are cached")
 	}
 }
 

@@ -261,6 +261,14 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	// Snapshot the active tab and on-screen page before this message is handled,
+	// so the post-handling check can detect a tab switch or a paging scroll and
+	// prefetch labels for the window that just came into view. Captured up front
+	// because the key handlers mutate activeTab/the list before falling through.
+	_, msgIsKey := msg.(tea.KeyMsg)
+	prevTab := m.activeTab
+	prevPage := m.currentList().Paginator.Page
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -579,6 +587,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.cmdPrefetchBody(&ii))
 			}
 		}
+		// Prefetch labels for the on-screen window in one batched round-trip so
+		// the first open of a visible item renders its chip row from cache.
+		cmds = append(cmds, m.cmdPrefetchLabels())
 
 	case bodyMsg:
 		if msg.err != nil {
@@ -658,6 +669,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case labelsMsg:
+		// A failed label prefetch is dropped silently: the per-item detail fetch
+		// (cmdFetchBody) still pulls labels on open, so chips just aren't warmed.
+		if msg.err == nil {
+			for key, labels := range msg.labels {
+				e := m.bodyCache[key]
+				// Never clobber a full fetch's labels: once an entry carries labels
+				// (set by a full fetch, alongside the body's rendered comments and
+				// author), a later label prefetch must leave it untouched so it can't
+				// drop them. Only warm an entry whose labels are still empty.
+				if e.labels != nil {
+					continue
+				}
+				e.labels = labels
+				m.bodyCache[key] = e
+			}
+		}
+
 	case errMsg:
 		m.loading = false
 		m.err = msg.err
@@ -679,6 +708,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newListModel, cmd := cur.Update(msg)
 		*cur = newListModel
 		cmds = append(cmds, cmd)
+	}
+
+	// A tab switch or a paging scroll brings a new on-screen window into view;
+	// prefetch its labels in one batched round-trip (mirroring the initial
+	// dataMsg prefetch) so the first open of a newly visible item renders its
+	// chip row from cache. The pre-key tab/page are captured above (see
+	// prevTab/prevPage); a no-op window (nothing new, all cached) yields a nil
+	// cmd from cmdPrefetchLabels.
+	if !m.detailOpen && msgIsKey && (m.activeTab != prevTab || m.currentList().Paginator.Page != prevPage) {
+		cmds = append(cmds, m.cmdPrefetchLabels())
 	}
 
 	return m, tea.Batch(cmds...)
@@ -723,6 +762,42 @@ func cacheKey(it *item) string {
 func (m model) cmdPrefetchBody(it *item) tea.Cmd {
 	return func() tea.Msg {
 		return bodyMsg{key: cacheKey(it), body: it.body, prefetch: true}
+	}
+}
+
+// cmdPrefetchLabels batches a single GraphQL round-trip pulling labels for the
+// active list's on-screen items whose labels aren't already cached, so the first
+// open of each visible item renders its chip row from cache instead of waiting
+// on the per-item detail fetch. The on-screen window is read from the list's
+// paginator (GetSliceBounds over the visible/filtered items), so only items the
+// user can actually see are fetched — at most one page's worth per call. Returns
+// nil when nothing visible needs fetching (empty list, all cached, or a window
+// that lands on no items), so callers can append it unconditionally.
+func (m model) cmdPrefetchLabels() tea.Cmd {
+	cur := m.currentList()
+	visible := cur.VisibleItems()
+	start, end := cur.Paginator.GetSliceBounds(len(visible))
+	var targets []labelTarget
+	for i := start; i < end; i++ {
+		it, ok := visible[i].(item)
+		if !ok {
+			continue
+		}
+		key := cacheKey(&it)
+		// Skip items whose labels are already cached by a prior prefetch or a
+		// full detail fetch; the no-clobber guard in the labelsMsg handler is the
+		// backstop, but skipping here keeps the batch (and the round-trip) small.
+		if e, ok := m.bodyCache[key]; ok && e.labels != nil {
+			continue
+		}
+		targets = append(targets, labelTarget{key: key, number: it.number, isPR: it.type_ == "pr"})
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		labels, err := fetchLabels(targets)
+		return labelsMsg{labels: labels, err: err}
 	}
 }
 
