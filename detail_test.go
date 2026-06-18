@@ -466,6 +466,79 @@ func TestDetailHeaderRendersLabelChips(t *testing.T) {
 	}
 }
 
+// Re-opening a previously-viewed detail must render its labels and comments
+// immediately from cache (no chip-row / comment pop-in), before the always-on
+// network refresh lands. Mirrors diffCache's cache-then-refresh pattern for
+// labels/author (#147). Comments already ride along in the cached body string
+// (composeDetailBody); labels/author are cached in the bodyEntry.
+func TestDetailReopenServesCachedLabelsAndComments(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: []list.Item{
+		item{number: 7, title: "labeled issue", body: "list body", type_: "issue"},
+	}})
+
+	// First open: the full fetch lands with body+comments, labels, and author.
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	key := cacheKey(tm.(model).detailItem)
+	full := composeDetailBody("real body", []comment{{author: "alice", body: "hi"}}, 1)
+	tm, _ = tm.Update(bodyMsg{
+		key:    key,
+		body:   full,
+		labels: []label{{name: "bug", color: "d73a4a"}},
+		author: "octocat",
+	})
+
+	// Close the detail (back to the list).
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if tm.(model).detailOpen {
+		t.Fatal("setup: detail did not close on esc")
+	}
+
+	// Re-open: no new bodyMsg yet, so labels/comments must come from cache.
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm := tm.(model)
+
+	hdr := ansi.Strip(mm.detailHeader())
+	if !strings.Contains(hdr, "bug") {
+		t.Errorf("re-opened detail header missing cached label chip:\n%s", hdr)
+	}
+	if !strings.Contains(hdr, "octocat") {
+		t.Errorf("re-opened detail header missing cached author:\n%s", hdr)
+	}
+	if !strings.Contains(mm.detailBody, "## Comments") {
+		t.Errorf("re-opened detail body missing cached comments:\n%s", mm.detailBody)
+	}
+	if mm.detailLoading {
+		t.Error("re-opened detail should not show the loading placeholder (body is cached)")
+	}
+}
+
+// A bare prefetch caches only the body (no labels/author); a re-open then shows
+// no chip row until the full fetch lands. Guards the prefetch-stores-body-only
+// path of the widened bodyCache.
+func TestDetailReopenPrefetchHasNoLabels(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: []list.Item{
+		item{number: 7, title: "labeled issue", body: "list body", type_: "issue"},
+	}})
+	key := cacheKey(&item{number: 7, type_: "issue"})
+
+	// Only a prefetch has landed (bare list body, no labels).
+	tm, _ = tm.Update(bodyMsg{key: key, body: "list body", prefetch: true})
+	if labels := tm.(model).bodyCache[key].labels; labels != nil {
+		t.Errorf("prefetch should cache no labels, got %v", labels)
+	}
+
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if got := ansi.Strip(tm.(model).detailHeader()); strings.Contains(got, "bug") {
+		t.Errorf("prefetch-only detail must not render a chip row:\n%s", got)
+	}
+}
+
 // A short label set that already fits the budget renders every chip unchanged
 // from the unclamped output (no overflow marker, no dropped chips).
 func TestRenderLabelChipsShortSetUnchanged(t *testing.T) {

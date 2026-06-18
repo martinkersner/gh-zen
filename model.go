@@ -75,8 +75,13 @@ type model struct {
 	detailMatches     []searchMatch
 	detailActiveMatch int
 
-	// Cache: "issue_42" or "pr_7" -> body
-	bodyCache map[string]string
+	// Cache: "issue_42" or "pr_7" -> body (+ labels/author from a full fetch).
+	// The body string already carries the rendered comments (composeDetailBody);
+	// labels/author are cached alongside so a re-opened detail renders its chip
+	// row and header instantly from cache, with the network fetch refreshing
+	// them in place (mirrors diffCache). A bare prefetch leaves labels/author
+	// empty until the full fetch lands.
+	bodyCache map[string]bodyEntry
 	// Cache: "pr_7" -> diff text (PRs only)
 	diffCache map[string]string
 
@@ -99,6 +104,18 @@ type model struct {
 	err     error
 }
 
+// bodyEntry is a cached detail payload: the composed body string (which already
+// includes rendered comments, see composeDetailBody) plus the labels and author
+// that arrive only with a full fetchBody. Caching them together lets a
+// re-opened detail render its chip row and header from cache while the network
+// fetch refreshes them in place. A prefetch stores only body (labels nil,
+// author "").
+type bodyEntry struct {
+	body   string
+	labels []label
+	author string
+}
+
 func newModel() model {
 	// Restore the persisted palette (falls back to the default on a missing,
 	// unreadable, or unknown config) before any rendering reads the globals.
@@ -108,7 +125,7 @@ func newModel() model {
 		tabs:      []string{"Issues", "PRs"},
 		activeTab: tabIssues,
 		loading:   true,
-		bodyCache: make(map[string]string),
+		bodyCache: make(map[string]bodyEntry),
 		diffCache: make(map[string]string),
 		issueList: list.New([]list.Item{}, newItemDelegate(), 0, 0),
 		prList:    list.New([]list.Item{}, newItemDelegate(), 0, 0),
@@ -498,6 +515,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailShowOverview = false
 				m.detailBody = m.cachedBody(it)
 				m.detailLoading = m.detailBody == ""
+				// Serve cached labels/author into the (freshly copied) item so the
+				// chip row and header render instantly from cache; the network
+				// fetch below refreshes them in place (mirrors diffCache). The
+				// list fetch may already have set it.author/labels — only override
+				// when the cache has the fuller full-fetch values.
+				if e, ok := m.bodyCache[cacheKey(it)]; ok {
+					if e.labels != nil {
+						it.labels = e.labels
+					}
+					if e.author != "" {
+						it.author = e.author
+					}
+				}
 				m.openDetailViewport()
 				// Always fetch on open so the conversation comments (which the
 				// cheap list/prefetch body lacks) are pulled. A cached body is
@@ -567,7 +597,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		m.bodyCache[msg.key] = msg.body
+		// Cache the body alongside labels/author so a re-opened detail renders
+		// the chip row and header from cache. A prefetch carries neither, so it
+		// stores only the body (labels nil, author "").
+		entry := bodyEntry{body: msg.body}
+		if !msg.prefetch {
+			entry.labels = msg.labels
+			entry.author = msg.author
+		}
+		m.bodyCache[msg.key] = entry
 		if m.detailOpen && m.detailItem != nil && cacheKey(m.detailItem) == msg.key {
 			// Preserve the current scroll position across a refresh so the user
 			// isn't yanked back to the top; SetYOffset clamps to the new content.
@@ -669,8 +707,8 @@ func (m model) cachedBody(it *item) string {
 	if it == nil {
 		return ""
 	}
-	if body, ok := m.bodyCache[cacheKey(it)]; ok && body != "" {
-		return body
+	if e, ok := m.bodyCache[cacheKey(it)]; ok && e.body != "" {
+		return e.body
 	}
 	if it.body != "" {
 		return it.body
