@@ -107,9 +107,7 @@ func TestFetchBodyIssueSuccess(t *testing.T) {
 			"pullRequest":{"body":"SHOULD NOT BE USED","comments":{"nodes":[]}}
 		}}`,
 	}
-	withFakeGitHub(t, fake, nil, testRepo(), nil)
-
-	body, comments, total, labels, author, err := fetchBody(42, false)
+	body, comments, total, labels, author, err := fetchBody(fake, testRepo(), 42, false)
 	if err != nil {
 		t.Fatalf("fetchBody returned error: %v", err)
 	}
@@ -184,9 +182,7 @@ func TestFetchBodyPRSuccess(t *testing.T) {
 			]}}
 		}}`,
 	}
-	withFakeGitHub(t, fake, nil, testRepo(), nil)
-
-	body, comments, total, labels, author, err := fetchBody(7, true)
+	body, comments, total, labels, author, err := fetchBody(fake, testRepo(), 7, true)
 	if err != nil {
 		t.Fatalf("fetchBody returned error: %v", err)
 	}
@@ -214,21 +210,24 @@ func TestFetchBodyPRSuccess(t *testing.T) {
 	}
 }
 
-func TestFetchBodyClientError(t *testing.T) {
+// githubConn.resolve surfaces a client-construction failure (and doesn't cache
+// it, so a later call retries — see TestGithubConnResolveMemoizes).
+func TestGithubConnResolveClientError(t *testing.T) {
 	wantErr := errors.New("no auth token")
 	withFakeGitHub(t, nil, wantErr, testRepo(), nil)
 
-	_, _, _, _, _, err := fetchBody(1, false)
+	_, _, err := (&githubConn{}).resolve()
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
 }
 
-func TestFetchBodyRepoError(t *testing.T) {
+// githubConn.resolve surfaces a repo-resolution failure.
+func TestGithubConnResolveRepoError(t *testing.T) {
 	wantErr := errors.New("not a git repo")
 	withFakeGitHub(t, &fakeGraphQLClient{}, nil, repoInfo{}, wantErr)
 
-	_, _, _, _, _, err := fetchBody(1, false)
+	_, _, err := (&githubConn{}).resolve()
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
@@ -237,9 +236,8 @@ func TestFetchBodyRepoError(t *testing.T) {
 func TestFetchBodyQueryError(t *testing.T) {
 	wantErr := errors.New("graphql: rate limited")
 	fake := &fakeGraphQLClient{err: wantErr}
-	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	_, _, _, _, _, err := fetchBody(1, false)
+	_, _, _, _, _, err := fetchBody(fake, testRepo(), 1, false)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
@@ -256,7 +254,7 @@ func TestFetchIssuesAndPRsSuccess(t *testing.T) {
 	}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	msg := fetchIssuesAndPRs()()
+	msg := fetchIssuesAndPRs(&githubConn{})()
 	data, ok := msg.(dataMsg)
 	if !ok {
 		t.Fatalf("expected dataMsg, got %T (%v)", msg, msg)
@@ -285,7 +283,7 @@ func TestFetchIssuesAndPRsClientError(t *testing.T) {
 	wantErr := errors.New("no auth token")
 	withFakeGitHub(t, nil, wantErr, testRepo(), nil)
 
-	msg := fetchIssuesAndPRs()()
+	msg := fetchIssuesAndPRs(&githubConn{})()
 	em, ok := msg.(errMsg)
 	if !ok {
 		t.Fatalf("expected errMsg, got %T", msg)
@@ -299,7 +297,7 @@ func TestFetchIssuesAndPRsRepoError(t *testing.T) {
 	wantErr := errors.New("not a git repo")
 	withFakeGitHub(t, &fakeGraphQLClient{}, nil, repoInfo{}, wantErr)
 
-	msg := fetchIssuesAndPRs()()
+	msg := fetchIssuesAndPRs(&githubConn{})()
 	em, ok := msg.(errMsg)
 	if !ok {
 		t.Fatalf("expected errMsg, got %T", msg)
@@ -314,7 +312,7 @@ func TestFetchIssuesAndPRsQueryError(t *testing.T) {
 	fake := &fakeGraphQLClient{err: wantErr}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	msg := fetchIssuesAndPRs()()
+	msg := fetchIssuesAndPRs(&githubConn{})()
 	em, ok := msg.(errMsg)
 	if !ok {
 		t.Fatalf("expected errMsg, got %T", msg)
@@ -335,13 +333,11 @@ func TestFetchLabelsBatchedSuccess(t *testing.T) {
 			"n1":{"labels":{"nodes":[{"name":"enhancement","color":"a2eeef"},{"name":"wip","color":"fbca04"}]}}
 		}}`,
 	}
-	withFakeGitHub(t, fake, nil, testRepo(), nil)
-
 	targets := []labelTarget{
 		{key: "issue_12", number: 12, isPR: false},
 		{key: "pr_7", number: 7, isPR: true},
 	}
-	got, err := fetchLabels(targets)
+	got, err := fetchLabels(fake, testRepo(), targets)
 	if err != nil {
 		t.Fatalf("fetchLabels returned error: %v", err)
 	}
@@ -381,9 +377,7 @@ func TestFetchLabelsOmitsEmpty(t *testing.T) {
 			"n1":{"labels":{"nodes":[{"name":"bug","color":"d73a4a"}]}}
 		}}`,
 	}
-	withFakeGitHub(t, fake, nil, testRepo(), nil)
-
-	got, err := fetchLabels([]labelTarget{
+	got, err := fetchLabels(fake, testRepo(), []labelTarget{
 		{key: "issue_1", number: 1},
 		{key: "issue_2", number: 2},
 	})
@@ -402,9 +396,8 @@ func TestFetchLabelsOmitsEmpty(t *testing.T) {
 // caller needn't special-case an empty on-screen window.
 func TestFetchLabelsEmptyTargets(t *testing.T) {
 	fake := &fakeGraphQLClient{respJSON: `{"repository":{}}`}
-	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	got, err := fetchLabels(nil)
+	got, err := fetchLabels(fake, testRepo(), nil)
 	if err != nil {
 		t.Fatalf("fetchLabels(nil) returned error: %v", err)
 	}
@@ -416,22 +409,42 @@ func TestFetchLabelsEmptyTargets(t *testing.T) {
 	}
 }
 
-func TestFetchLabelsClientError(t *testing.T) {
-	wantErr := errors.New("no auth token")
-	withFakeGitHub(t, nil, wantErr, testRepo(), nil)
+// githubConn.resolve caches a successful resolution: the client/repo seams run
+// once and every later call returns the memoized pair (so per-session fetches
+// don't re-resolve the git remote). A prior failure is not cached.
+func TestGithubConnResolveMemoizes(t *testing.T) {
+	clientCalls, repoCalls := 0, 0
+	origClient := newGraphQLClient
+	origRepo := currentRepo
+	newGraphQLClient = func() (graphQLClient, error) {
+		clientCalls++
+		return &fakeGraphQLClient{}, nil
+	}
+	currentRepo = func() (repoInfo, error) {
+		repoCalls++
+		return testRepo(), nil
+	}
+	t.Cleanup(func() {
+		newGraphQLClient = origClient
+		currentRepo = origRepo
+	})
 
-	_, err := fetchLabels([]labelTarget{{key: "issue_1", number: 1}})
-	if !errors.Is(err, wantErr) {
-		t.Errorf("err = %v, want %v", err, wantErr)
+	conn := &githubConn{}
+	for i := 0; i < 3; i++ {
+		if _, _, err := conn.resolve(); err != nil {
+			t.Fatalf("resolve #%d returned error: %v", i, err)
+		}
+	}
+	if clientCalls != 1 || repoCalls != 1 {
+		t.Errorf("seams resolved %d client / %d repo times across 3 calls, want 1/1", clientCalls, repoCalls)
 	}
 }
 
 func TestFetchLabelsQueryError(t *testing.T) {
 	wantErr := errors.New("graphql: rate limited")
 	fake := &fakeGraphQLClient{err: wantErr}
-	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
-	_, err := fetchLabels([]labelTarget{{key: "issue_1", number: 1}})
+	_, err := fetchLabels(fake, testRepo(), []labelTarget{{key: "issue_1", number: 1}})
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}

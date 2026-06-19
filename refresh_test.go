@@ -108,7 +108,7 @@ func TestTickSkipsRefreshWhileFiltering(t *testing.T) {
 	// the network). The counter records whether the tick dispatched it.
 	fetches := 0
 	orig := fetchIssuesAndPRs
-	fetchIssuesAndPRs = func() tea.Cmd {
+	fetchIssuesAndPRs = func(*githubConn) tea.Cmd {
 		fetches++
 		return func() tea.Msg { return dataMsg{} }
 	}
