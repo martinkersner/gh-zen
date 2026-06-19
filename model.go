@@ -34,6 +34,28 @@ type model struct {
 	issueList list.Model
 	prList    list.Model
 
+	// Total open issues/PRs on GitHub from the last fetch's connection
+	// totalCount, shown in the tab brackets. These can exceed the loaded item
+	// count until every page is paged in; tabCount falls back to the loaded
+	// length when a total is unknown (zero).
+	issueTotal int
+	prTotal    int
+
+	// Lazy-pagination state per tab. cursor is the `after` for the next page;
+	// hasNext is whether more pages remain; loadingMore guards against firing a
+	// duplicate next-page fetch while one is in flight; pages counts how many
+	// pages are currently loaded (1 after the initial fetch). Once any tab has
+	// paged past page 1 the background auto-refresh is suppressed so it can't
+	// clobber the appended pages / scroll position (manual `r` reloads page 1).
+	issueCursor      string
+	issueHasNext     bool
+	issueLoadingMore bool
+	issuePages       int
+	prCursor         string
+	prHasNext        bool
+	prLoadingMore    bool
+	prPages          int
+
 	// Detail pane
 	detailOpen     bool
 	detailLoading  bool
@@ -599,11 +621,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if n := len(cur.VisibleItems()); n > 0 {
 				cur.Select(n - 1)
 			}
+			// Landing on the last item arms lazy pagination: pull the next page in.
+			if cmd := m.maybeLoadMore(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 			// A jump to the last item can land on a new page; prefetch its labels.
 			if cur.Paginator.Page != prevPage {
-				return m, m.cmdPrefetchLabels()
+				cmds = append(cmds, m.cmdPrefetchLabels())
 			}
-			return m, nil
+			return m, tea.Batch(cmds...)
 		case "enter":
 			it := m.selectedItem()
 			if it != nil {
@@ -660,6 +686,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		prIdx := m.prList.Index()
 		m.setListItems(tabIssues, msg.issues)
 		m.setListItems(tabPRs, msg.prs)
+		m.issueTotal = msg.issueTotal
+		m.prTotal = msg.prTotal
+		// Reset pagination to page 1: a full (re)load replaces the lists, so any
+		// previously appended pages are gone and the cursors restart from this
+		// page's pageInfo. A manual `r` thus reloads from the top.
+		m.issueCursor, m.issueHasNext, m.issueLoadingMore, m.issuePages = msg.issueEndCursor, msg.issueHasNextPage, false, 1
+		m.prCursor, m.prHasNext, m.prLoadingMore, m.prPages = msg.prEndCursor, msg.prHasNextPage, false, 1
 		restoreIndex(&m.issueList, issueIdx)
 		restoreIndex(&m.prList, prIdx)
 		m.updateListSize()
@@ -681,6 +714,60 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Prefetch labels for the on-screen window in one batched round-trip so
 		// the first open of a visible item renders its chip row from cache.
 		cmds = append(cmds, m.cmdPrefetchLabels())
+
+	case moreDataMsg:
+		// One lazily-loaded page for a single tab: append it to the existing
+		// items (preserving the cursor) and advance that tab's pagination state.
+		// A failed fetch just clears the in-flight guard so a later scroll retries.
+		l := &m.issueList
+		if msg.tab == tabPRs {
+			l = &m.prList
+			m.prLoadingMore = false
+		} else {
+			m.issueLoadingMore = false
+		}
+		if msg.err != nil {
+			break
+		}
+		idx := l.Index()
+		m.setListItems(msg.tab, append(l.Items(), msg.items...))
+		restoreIndex(l, idx)
+		if msg.tab == tabPRs {
+			m.prCursor, m.prHasNext, m.prPages = msg.endCursor, msg.hasNextPage, m.prPages+1
+		} else {
+			m.issueCursor, m.issueHasNext, m.issuePages = msg.endCursor, msg.hasNextPage, m.issuePages+1
+		}
+		m.updateListSize()
+		// Newly appended rows are now near the cursor; warm their labels.
+		cmds = append(cmds, m.cmdPrefetchLabels())
+
+	case visibleRefreshMsg:
+		// In-place deep refresh: patch the title/closed of already-loaded rows
+		// from the by-number fetch. Count and order are untouched (so the cursor
+		// and loaded pages survive); only changed rows trigger a SetItems.
+		if msg.err != nil || len(msg.items) == 0 {
+			break
+		}
+		l := &m.issueList
+		if msg.tab == tabPRs {
+			l = &m.prList
+		}
+		cur := l.Items()
+		next := make([]list.Item, len(cur))
+		changed := false
+		for i, it := range cur {
+			ii := it.(item)
+			if r, ok := msg.items[ii.number]; ok && (ii.title != r.title || ii.closed != r.closed) {
+				ii.title, ii.closed = r.title, r.closed
+				changed = true
+			}
+			next[i] = ii
+		}
+		if changed {
+			idx := l.Index()
+			m.setListItems(msg.tab, next)
+			restoreIndex(l, idx)
+		}
 
 	case bodyMsg:
 		if msg.err != nil {
@@ -812,11 +899,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
-		// Auto-refresh the current view, then re-arm the ticker. Skip the data
-		// fetch while the user is mid-filter so the list isn't reshuffled under
-		// them; the ticker still keeps running.
-		if m.detailOpen || !m.currentList().SettingFilter() {
+		// Auto-refresh the current view, then re-arm the ticker. Skip the fetch
+		// while the user is mid-filter so the list isn't reshuffled under them.
+		// Once extra pages have been lazily loaded, a full page-1 refetch would
+		// reorder the list and reset pagination, so instead refresh only the
+		// on-screen rows in place (by number) — the scroll position and loaded
+		// pages survive, at the cost of not surfacing brand-new items until a
+		// manual `r` reloads from the top. The detail-view body refresh is
+		// unaffected. The ticker keeps running regardless.
+		if m.detailOpen {
 			cmds = append(cmds, m.refreshCurrentView(true))
+		} else if !m.currentList().SettingFilter() {
+			if m.paginated() {
+				cmds = append(cmds, m.cmdRefreshVisible())
+			} else {
+				cmds = append(cmds, m.refreshCurrentView(true))
+			}
 		}
 		cmds = append(cmds, tickCmd())
 		return m, tea.Batch(cmds...)
@@ -840,7 +938,60 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.cmdPrefetchLabels())
 	}
 
+	// Lazy pagination: a navigation keystroke that lands the cursor near the end
+	// of the loaded items pulls the next page in. Only on key input, so sitting
+	// still never fetches.
+	if !m.detailOpen && msgIsKey {
+		if cmd := m.maybeLoadMore(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+
 	return m, tea.Batch(cmds...)
+}
+
+// paginateThreshold is how close to the end of the loaded items the cursor must
+// get (in rows) before the next page is pulled in, giving a buffer so the new
+// page is usually loaded before the user reaches the very bottom.
+const paginateThreshold = 10
+
+// paginated reports whether either tab has lazily loaded past its first page.
+// The background auto-refresh is suppressed in that state so a page-1 refetch
+// can't drop the appended pages.
+func (m model) paginated() bool {
+	return m.issuePages > 1 || m.prPages > 1
+}
+
+// maybeLoadMore fires a next-page fetch for the active tab when the selection
+// has moved within paginateThreshold rows of the last loaded item, there is a
+// next page, and one isn't already in flight. Skipped while a filter is active
+// (the filtered view spans only loaded items; cursor pagination there is
+// ambiguous). Sets the in-flight guard and returns the cmd, else nil.
+func (m *model) maybeLoadMore() tea.Cmd {
+	l := m.currentList()
+	if l.FilterState() != list.Unfiltered {
+		return nil
+	}
+	var hasNext, loadingMore bool
+	var cursor string
+	switch m.activeTab {
+	case tabPRs:
+		hasNext, loadingMore, cursor = m.prHasNext, m.prLoadingMore, m.prCursor
+	default:
+		hasNext, loadingMore, cursor = m.issueHasNext, m.issueLoadingMore, m.issueCursor
+	}
+	if !hasNext || loadingMore {
+		return nil
+	}
+	if l.Index() < len(l.Items())-paginateThreshold {
+		return nil
+	}
+	if m.activeTab == tabPRs {
+		m.prLoadingMore = true
+	} else {
+		m.issueLoadingMore = true
+	}
+	return fetchMoreItems(m.conn, m.activeTab, cursor)
 }
 
 func (m *model) updateListSize() {
@@ -945,6 +1096,27 @@ func (m model) cmdPrefetchLabels() tea.Cmd {
 		labels, err := fetchLabels(client, repo, targets)
 		return labelsMsg{labels: labels, err: err}
 	}
+}
+
+// cmdRefreshVisible re-fetches the current state of just the active tab's
+// on-screen rows (by number) for the deep auto-refresh. The window is read from
+// the paginator (GetSliceBounds over the visible items), mirroring
+// cmdPrefetchLabels, so the cost is bounded by screen height rather than list
+// depth. Returns nil when nothing is on screen.
+func (m model) cmdRefreshVisible() tea.Cmd {
+	cur := m.currentList()
+	visible := cur.VisibleItems()
+	start, end := cur.Paginator.GetSliceBounds(len(visible))
+	var numbers []int
+	for i := start; i < end; i++ {
+		if it, ok := visible[i].(item); ok {
+			numbers = append(numbers, it.number)
+		}
+	}
+	if len(numbers) == 0 {
+		return nil
+	}
+	return fetchVisibleItems(m.conn, m.activeTab, numbers)
 }
 
 // cmdFetchBody re-fetches the focused item's content (the body) from GitHub. PR

@@ -88,6 +88,50 @@ func (c *githubConn) resolve() (graphQLClient, repoInfo, error) {
 type dataMsg struct {
 	issues []list.Item
 	prs    []list.Item
+	// Total open issues/PRs on GitHub (connection totalCount), which can exceed
+	// the fetched node count since the query caps at listPageSize. The tabs
+	// display these so the bracket reflects the repo's real open count, not just
+	// what was fetched. Zero on the test-constructed dataMsgs that omit them;
+	// tabCount falls back to the fetched length in that case.
+	issueTotal int
+	prTotal    int
+	// Pagination state for the first page of each tab: the cursor to pass as the
+	// next `after`, and whether more pages exist. Consumed by the dataMsg handler
+	// to arm lazy "load more" on scroll. Zero-valued on test dataMsgs (hasNext
+	// false → pagination simply never triggers).
+	issueEndCursor   string
+	issueHasNextPage bool
+	prEndCursor      string
+	prHasNextPage    bool
+}
+
+// moreDataMsg delivers one appended page for a single tab, fetched lazily when
+// the cursor nears the end of the loaded items. Unlike dataMsg (which replaces
+// the list), its items are appended to what's already loaded.
+type moreDataMsg struct {
+	tab         tab
+	items       []list.Item
+	endCursor   string
+	hasNextPage bool
+	err         error
+}
+
+// refreshedItem is the freshly-fetched mutable state of one already-loaded row.
+type refreshedItem struct {
+	title  string
+	closed bool
+}
+
+// visibleRefreshMsg delivers an in-place refresh of the on-screen rows for a
+// single tab, keyed by issue/PR number. It backs the deep auto-refresh: once
+// extra pages are loaded the background tick refreshes just the visible window
+// (by number) and patches title/closed in place, rather than refetching the
+// whole list (which would reorder it and reset pagination). items is nil/empty
+// when nothing came back.
+type visibleRefreshMsg struct {
+	tab   tab
+	items map[int]refreshedItem
+	err   error
 }
 
 type bodyMsg struct {
@@ -404,11 +448,42 @@ func colorizeDiff(diff string) string {
 	return strings.Join(lines, "\n")
 }
 
-// fetchIssuesAndPRs returns the cmd that loads the issue/PR lists from GitHub.
-// It is a package var (like ghDiff) so tests can swap in a hermetic data source
-// and drive the program offline without hitting the network. The conn supplies
-// the memoized client+repo (resolved inside the returned cmd's goroutine, off
-// the UI thread, so a refresh tick reuses the first resolution).
+// listPageSize is how many issues/PRs are fetched per page, both on the initial
+// load and on each lazy "load more" as the cursor nears the end of the list.
+// GitHub caps connection `first` at 100.
+const listPageSize = 50
+
+// listNode is one issue/PR row as returned by the list queries.
+type listNode struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+	Author struct {
+		Login string `json:"login"`
+	} `json:"author"`
+}
+
+// pageInfo carries cursor pagination state from a connection.
+type pageInfo struct {
+	EndCursor   string `json:"endCursor"`
+	HasNextPage bool   `json:"hasNextPage"`
+}
+
+func listItemsFromNodes(nodes []listNode, type_ string) []list.Item {
+	var items []list.Item
+	for _, n := range nodes {
+		items = append(items, item{number: n.Number, title: n.Title, body: n.Body, type_: type_, author: n.Author.Login})
+	}
+	return items
+}
+
+// fetchIssuesAndPRs returns the cmd that loads the first page of the issue/PR
+// lists from GitHub. It is a package var (like ghDiff) so tests can swap in a
+// hermetic data source and drive the program offline without hitting the
+// network. The conn supplies the memoized client+repo (resolved inside the
+// returned cmd's goroutine, off the UI thread, so a refresh tick reuses the
+// first resolution). pageInfo is requested so the dataMsg handler can arm lazy
+// pagination; see fetchMoreItems for the per-tab next-page fetch.
 var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 	return func() tea.Msg {
 		client, repo, err := conn.resolve()
@@ -417,9 +492,11 @@ var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 		}
 
 		query := `
-			query($owner: String!, $repo: String!) {
+			query($owner: String!, $repo: String!, $first: Int!) {
 				repository(owner: $owner, name: $repo) {
-					issues(first: 50, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+					issues(first: $first, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+						totalCount
+						pageInfo { endCursor hasNextPage }
 						nodes {
 							number
 							title
@@ -427,7 +504,9 @@ var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 							author { login }
 						}
 					}
-					pullRequests(first: 50, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+					pullRequests(first: $first, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+						totalCount
+						pageInfo { endCursor hasNextPage }
 						nodes {
 							number
 							title
@@ -441,23 +520,20 @@ var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 		variables := map[string]interface{}{
 			"owner": repo.Owner,
 			"repo":  repo.Name,
+			"first": listPageSize,
 		}
 
-		type node struct {
-			Number int    `json:"number"`
-			Title  string `json:"title"`
-			Body   string `json:"body"`
-			Author struct {
-				Login string `json:"login"`
-			} `json:"author"`
-		}
 		type response struct {
 			Repository struct {
 				Issues struct {
-					Nodes []node `json:"nodes"`
+					TotalCount int        `json:"totalCount"`
+					PageInfo   pageInfo   `json:"pageInfo"`
+					Nodes      []listNode `json:"nodes"`
 				} `json:"issues"`
 				PullRequests struct {
-					Nodes []node `json:"nodes"`
+					TotalCount int        `json:"totalCount"`
+					PageInfo   pageInfo   `json:"pageInfo"`
+					Nodes      []listNode `json:"nodes"`
 				} `json:"pullRequests"`
 			} `json:"repository"`
 		}
@@ -467,14 +543,144 @@ var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 			return errMsg{err}
 		}
 
-		var issues, prs []list.Item
-		for _, n := range resp.Repository.Issues.Nodes {
-			issues = append(issues, item{number: n.Number, title: n.Title, body: n.Body, type_: "issue", author: n.Author.Login})
+		return dataMsg{
+			issues:           listItemsFromNodes(resp.Repository.Issues.Nodes, "issue"),
+			prs:              listItemsFromNodes(resp.Repository.PullRequests.Nodes, "pr"),
+			issueTotal:       resp.Repository.Issues.TotalCount,
+			prTotal:          resp.Repository.PullRequests.TotalCount,
+			issueEndCursor:   resp.Repository.Issues.PageInfo.EndCursor,
+			issueHasNextPage: resp.Repository.Issues.PageInfo.HasNextPage,
+			prEndCursor:      resp.Repository.PullRequests.PageInfo.EndCursor,
+			prHasNextPage:    resp.Repository.PullRequests.PageInfo.HasNextPage,
 		}
-		for _, n := range resp.Repository.PullRequests.Nodes {
-			prs = append(prs, item{number: n.Number, title: n.Title, body: n.Body, type_: "pr", author: n.Author.Login})
+	}
+}
+
+// fetchMoreItems returns the cmd that loads the next page for a single tab,
+// starting after the given cursor. It queries only the one connection (the other
+// tab's cursor isn't advancing) and returns a moreDataMsg whose items are
+// appended to the already-loaded list. It is a package var so tests can stub it.
+var fetchMoreItems = func(conn *githubConn, t tab, after string) tea.Cmd {
+	return func() tea.Msg {
+		client, repo, err := conn.resolve()
+		if err != nil {
+			return moreDataMsg{tab: t, err: err}
 		}
 
-		return dataMsg{issues: issues, prs: prs}
+		field := "issues"
+		type_ := "issue"
+		if t == tabPRs {
+			field = "pullRequests"
+			type_ = "pr"
+		}
+		query := `
+			query($owner: String!, $repo: String!, $first: Int!, $after: String!) {
+				repository(owner: $owner, name: $repo) {
+					` + field + `(first: $first, after: $after, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+						pageInfo { endCursor hasNextPage }
+						nodes {
+							number
+							title
+							body
+							author { login }
+						}
+					}
+				}
+			}
+		`
+		variables := map[string]interface{}{
+			"owner": repo.Owner,
+			"repo":  repo.Name,
+			"first": listPageSize,
+			"after": after,
+		}
+
+		type conn_ struct {
+			PageInfo pageInfo   `json:"pageInfo"`
+			Nodes    []listNode `json:"nodes"`
+		}
+		// The connection field name varies, so decode the repository object into a
+		// map of the two possible keys and pick the populated one.
+		type response struct {
+			Repository struct {
+				Issues       conn_ `json:"issues"`
+				PullRequests conn_ `json:"pullRequests"`
+			} `json:"repository"`
+		}
+
+		var resp response
+		if err := client.Do(query, variables, &resp); err != nil {
+			return moreDataMsg{tab: t, err: err}
+		}
+
+		c := resp.Repository.Issues
+		if t == tabPRs {
+			c = resp.Repository.PullRequests
+		}
+		return moreDataMsg{
+			tab:         t,
+			items:       listItemsFromNodes(c.Nodes, type_),
+			endCursor:   c.PageInfo.EndCursor,
+			hasNextPage: c.PageInfo.HasNextPage,
+		}
+	}
+}
+
+// fetchVisibleItems returns the cmd that re-fetches the current state (title +
+// open/closed) of a specific set of already-loaded rows by number, in one
+// aliased round-trip (n0, n1, ... mirroring fetchLabels). It backs the deep
+// auto-refresh: refreshing only the on-screen window keeps the cost bounded by
+// screen height (not list depth) and avoids the reorder/clobber a full refetch
+// would cause. It is a package var so tests can stub it.
+var fetchVisibleItems = func(conn *githubConn, t tab, numbers []int) tea.Cmd {
+	return func() tea.Msg {
+		if len(numbers) == 0 {
+			return visibleRefreshMsg{tab: t, items: map[int]refreshedItem{}}
+		}
+		client, repo, err := conn.resolve()
+		if err != nil {
+			return visibleRefreshMsg{tab: t, err: err}
+		}
+
+		field := "issue"
+		if t == tabPRs {
+			field = "pullRequest"
+		}
+		var b strings.Builder
+		b.WriteString("query($owner: String!, $repo: String!) {\n")
+		b.WriteString("\trepository(owner: $owner, name: $repo) {\n")
+		for i, n := range numbers {
+			fmt.Fprintf(&b, "\t\tn%d: %s(number: %d) { number title state }\n", i, field, n)
+		}
+		b.WriteString("\t}\n}")
+		variables := map[string]interface{}{
+			"owner": repo.Owner,
+			"repo":  repo.Name,
+		}
+
+		type aliased struct {
+			Number int    `json:"number"`
+			Title  string `json:"title"`
+			State  string `json:"state"`
+		}
+		// The aliased fields share one shape; decode the repository object into an
+		// alias->node map. A null entry (deleted item) is skipped.
+		var resp struct {
+			Repository map[string]*aliased `json:"repository"`
+		}
+		if err := client.Do(b.String(), variables, &resp); err != nil {
+			return visibleRefreshMsg{tab: t, err: err}
+		}
+
+		items := make(map[int]refreshedItem, len(resp.Repository))
+		for _, n := range resp.Repository {
+			if n == nil {
+				continue
+			}
+			// state is OPEN for live items; CLOSED (issues/PRs) or MERGED (PRs)
+			// otherwise — anything non-OPEN renders the "[closed]" prefix.
+			items[n.Number] = refreshedItem{title: n.Title, closed: n.State != "OPEN"}
+		}
+		return visibleRefreshMsg{tab: t, items: items}
 	}
 }

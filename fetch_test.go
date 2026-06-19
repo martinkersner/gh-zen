@@ -248,8 +248,8 @@ func TestFetchBodyQueryError(t *testing.T) {
 func TestFetchIssuesAndPRsSuccess(t *testing.T) {
 	fake := &fakeGraphQLClient{
 		respJSON: `{"repository":{
-			"issues":{"nodes":[{"number":11,"title":"issue one","body":"ibody"}]},
-			"pullRequests":{"nodes":[{"number":21,"title":"pr one","body":"pbody"}]}
+			"issues":{"totalCount":42,"nodes":[{"number":11,"title":"issue one","body":"ibody"}]},
+			"pullRequests":{"totalCount":7,"nodes":[{"number":21,"title":"pr one","body":"pbody"}]}
 		}}`,
 	}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
@@ -270,12 +270,105 @@ func TestFetchIssuesAndPRsSuccess(t *testing.T) {
 	if gotPR.number != 21 || gotPR.title != "pr one" || gotPR.body != "pbody" || gotPR.type_ != "pr" {
 		t.Errorf("pr item = %+v", gotPR)
 	}
+	if data.issueTotal != 42 || data.prTotal != 7 {
+		t.Errorf("totals = issues %d, prs %d; want 42, 7", data.issueTotal, data.prTotal)
+	}
 	gotVars := fake.lastVars()
 	if got := gotVars["owner"]; got != testRepoOwner {
 		t.Errorf("owner var = %v, want %q", got, testRepoOwner)
 	}
 	if got := gotVars["repo"]; got != testRepoName {
 		t.Errorf("repo var = %v, want %q", got, testRepoName)
+	}
+}
+
+func TestFetchMoreItemsIssues(t *testing.T) {
+	fake := &fakeGraphQLClient{
+		respJSON: `{"repository":{
+			"issues":{"pageInfo":{"endCursor":"C2","hasNextPage":true},"nodes":[{"number":99,"title":"page two","body":"b2"}]}
+		}}`,
+	}
+	withFakeGitHub(t, fake, nil, testRepo(), nil)
+
+	msg := fetchMoreItems(&githubConn{}, tabIssues, "C1")()
+	more, ok := msg.(moreDataMsg)
+	if !ok {
+		t.Fatalf("expected moreDataMsg, got %T (%v)", msg, msg)
+	}
+	if more.tab != tabIssues || more.endCursor != "C2" || !more.hasNextPage {
+		t.Errorf("moreDataMsg = %+v", more)
+	}
+	if len(more.items) != 1 {
+		t.Fatalf("got %d items, want 1", len(more.items))
+	}
+	got := more.items[0].(item)
+	if got.number != 99 || got.title != "page two" || got.type_ != "issue" {
+		t.Errorf("item = %+v", got)
+	}
+	if after := fake.lastVars()["after"]; after != "C1" {
+		t.Errorf("after var = %v, want C1", after)
+	}
+}
+
+func TestFetchMoreItemsPRsError(t *testing.T) {
+	wantErr := errors.New("rate limited")
+	withFakeGitHub(t, &fakeGraphQLClient{err: wantErr}, nil, testRepo(), nil)
+
+	msg := fetchMoreItems(&githubConn{}, tabPRs, "C1")()
+	more, ok := msg.(moreDataMsg)
+	if !ok {
+		t.Fatalf("expected moreDataMsg, got %T", msg)
+	}
+	if more.tab != tabPRs || !errors.Is(more.err, wantErr) {
+		t.Errorf("moreDataMsg = %+v, want tab=PRs err=%v", more, wantErr)
+	}
+}
+
+func TestFetchVisibleItems(t *testing.T) {
+	fake := &fakeGraphQLClient{
+		respJSON: `{"repository":{
+			"n0":{"number":1,"title":"fresh one","state":"OPEN"},
+			"n1":{"number":2,"title":"fresh two","state":"CLOSED"},
+			"n2":null
+		}}`,
+	}
+	withFakeGitHub(t, fake, nil, testRepo(), nil)
+
+	msg := fetchVisibleItems(&githubConn{}, tabIssues, []int{1, 2, 3})()
+	vr, ok := msg.(visibleRefreshMsg)
+	if !ok {
+		t.Fatalf("expected visibleRefreshMsg, got %T (%v)", msg, msg)
+	}
+	if vr.tab != tabIssues {
+		t.Errorf("tab = %v, want issues", vr.tab)
+	}
+	if len(vr.items) != 2 {
+		t.Fatalf("got %d items, want 2 (null skipped)", len(vr.items))
+	}
+	if got := vr.items[1]; got.title != "fresh one" || got.closed {
+		t.Errorf("item 1 = %+v, want {fresh one, open}", got)
+	}
+	if got := vr.items[2]; got.title != "fresh two" || !got.closed {
+		t.Errorf("item 2 = %+v, want {fresh two, closed}", got)
+	}
+	// The aliased query must select the issue field for the issues tab.
+	if q := fake.lastQuery(); !strings.Contains(q, "issue(number: 1)") {
+		t.Errorf("query missing aliased issue selection: %q", q)
+	}
+}
+
+func TestFetchVisibleItemsEmpty(t *testing.T) {
+	// No numbers → no round-trip, empty result.
+	fake := &fakeGraphQLClient{err: errors.New("should not be called")}
+	withFakeGitHub(t, fake, nil, testRepo(), nil)
+
+	msg := fetchVisibleItems(&githubConn{}, tabPRs, nil)()
+	vr, ok := msg.(visibleRefreshMsg)
+	if !ok {
+		t.Fatalf("expected visibleRefreshMsg, got %T", msg)
+	}
+	if vr.err != nil || len(vr.items) != 0 {
+		t.Errorf("empty fetch = %+v, want no err / no items", vr)
 	}
 }
 
