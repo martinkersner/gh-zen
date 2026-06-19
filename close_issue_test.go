@@ -171,6 +171,30 @@ func TestCloseIssueReflectsState(t *testing.T) {
 	}
 }
 
+// Closing the issue open in detail returns to the list view once confirmed.
+func TestCloseIssueFromDetailReturnsToList(t *testing.T) {
+	withStubClose(t, nil)
+	m := openDetailWithBody(t, "body", 80, 24) // issue #1 detail open
+	var tm tea.Model = m
+
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	_, cmd := tm.Update(tea.KeyMsg{Type: tea.KeyEnter}) // Completed
+	msg := cmd()                                        // closeIssueResultMsg{number:1}
+	tm, _ = tm.Update(msg)
+
+	mm := tm.(model)
+	if mm.detailOpen {
+		t.Error("closing the detailed issue should return to the list view")
+	}
+	if mm.detailItem != nil {
+		t.Error("detail item should be cleared on return to list")
+	}
+	it := mm.issueList.Items()[0].(item)
+	if !it.closed {
+		t.Error("issue should still be marked closed in the list")
+	}
+}
+
 // A failed close surfaces the error on the model without crashing and leaves the
 // issue unmarked.
 func TestCloseIssueErrorSurfaced(t *testing.T) {
