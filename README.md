@@ -25,7 +25,3 @@ make run
 make test
 make bench
 ```
-
-`make bench` runs the performance benchmarks (cold launch, screen-transition
-latency, and the `Update`/`View` hot paths). They run fully offline (the GitHub
-fetch is stubbed), so no network or `gh` is required.
