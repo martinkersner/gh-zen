@@ -147,20 +147,30 @@ func (m model) detailHeader() string {
 // justified row for the detail header (issue #153): the "@author" is left-aligned
 // and styled muted (so it reads as secondary to the bold accent title), the label
 // chips are right-aligned, and the gap between them is filled with spaces so the
-// chips sit flush against the right edge. Returns "" when both segments are empty
-// so the header collapses to the title-only layout unchanged.
+// chips sit one column shy of the right edge. Returns "" when both segments are
+// empty so the header collapses to the title-only layout unchanged.
 //
 // width is the displayed-column budget for the row content (the caller adds
-// PaddingLeft(1), so it passes m.width-1). The chips get whatever the author and
-// a one-column gap leave of that budget, so a long login can't push the chips off
-// the row (renderLabelChips clamps them with a "+N" overflow marker). With only
-// labels present they still right-align; with only an author present it sits at
-// the left as before. A width <= 0 (no resize yet) disables justification and the
-// chip clamp, rendering author then chips at their natural width.
+// PaddingLeft(1), so it passes m.width-1). A one-column gutter is reserved on the
+// right so the right-most chip's trailing background padding never paints the
+// terminal's final column (where it would bleed to the edge and read wider than
+// the inner chips). The chips get whatever the author and a one-column gap leave
+// of the remaining budget, so a long login can't push the chips off the row
+// (renderLabelChips clamps them with a "+N" overflow marker). With only labels
+// present they still right-align; with only an author present it sits at the left
+// as before. A width <= 0 (no resize yet) disables justification and the chip
+// clamp, rendering author then chips at their natural width.
 func renderMetaRow(author string, labels []label, width int) string {
 	left := ""
 	if author != "" {
 		left = lipgloss.NewStyle().Foreground(mutedColor).Render("@" + author)
+	}
+
+	// Reserve a one-column gutter on the right (mirroring the caller's
+	// PaddingLeft(1)) so no chip paints the terminal's final column. Skip it when
+	// width <= 0 (no resize yet), which already disables clamping/justification.
+	if width > 0 {
+		width--
 	}
 
 	// Chips get the budget left after the author and a single-column gap, so the
