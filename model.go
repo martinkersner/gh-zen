@@ -81,9 +81,12 @@ type model struct {
 	// row and header instantly from cache, with the network fetch refreshing
 	// them in place (mirrors diffCache). A bare prefetch leaves labels/author
 	// empty until the full fetch lands.
-	bodyCache map[string]bodyEntry
-	// Cache: "pr_7" -> diff text (PRs only)
-	diffCache map[string]string
+	// Bounded with LRU eviction (see lruCache / maxBodyCacheEntries) so a long
+	// session that pages through many items can't grow it without limit.
+	bodyCache *lruCache[bodyEntry]
+	// Cache: "pr_7" -> diff text (PRs only). Also LRU-bounded
+	// (maxDiffCacheEntries).
+	diffCache *lruCache[string]
 
 	// conn memoizes the GraphQL client + resolved repo so the fetch layer
 	// resolves them once per session instead of on every round-trip (see
@@ -141,8 +144,8 @@ func newModel() model {
 		activeTab: tabIssues,
 		loading:   true,
 		conn:      &githubConn{},
-		bodyCache: make(map[string]bodyEntry),
-		diffCache: make(map[string]string),
+		bodyCache: newLRUCache[bodyEntry](maxBodyCacheEntries),
+		diffCache: newLRUCache[string](maxDiffCacheEntries),
 		issueList: list.New([]list.Item{}, newItemDelegate(), 0, 0),
 		prList:    list.New([]list.Item{}, newItemDelegate(), 0, 0),
 	}
@@ -616,7 +619,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// fetch below refreshes them in place (mirrors diffCache). The
 				// list fetch may already have set it.author/labels — only override
 				// when the cache has the fuller full-fetch values.
-				if e, ok := m.bodyCache[cacheKey(it)]; ok {
+				if e, ok := m.bodyCache.get(cacheKey(it)); ok {
 					if e.labels != nil {
 						it.labels = e.labels
 					}
@@ -639,7 +642,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// before this lands, toggleDiff sees the cache miss, sets the loading
 				// flag itself, and the prefetch result populates the view on arrival.
 				if it.type_ == "pr" {
-					if _, ok := m.diffCache[cacheKey(it)]; !ok {
+					if !m.diffCache.has(cacheKey(it)) {
 						cmds = append(cmds, m.cmdFetchDiff(it))
 					}
 				}
@@ -671,7 +674,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			ii := it.(item)
-			if _, ok := m.bodyCache[cacheKey(&ii)]; !ok {
+			if !m.bodyCache.has(cacheKey(&ii)) {
 				cmds = append(cmds, m.cmdPrefetchBody(&ii))
 			}
 		}
@@ -692,7 +695,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// clobber a key a full fetch already populated with body+comments (a tick
 		// can enqueue a prefetch while a full fetch is in flight).
 		if msg.prefetch {
-			if _, ok := m.bodyCache[msg.key]; ok {
+			// has (not get): we break out immediately without using the value, so a
+			// recency promotion here would be spurious — don't touch the LRU on a
+			// guard that doesn't surface the entry.
+			if m.bodyCache.has(msg.key) {
 				break
 			}
 		}
@@ -704,7 +710,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			entry.labels = msg.labels
 			entry.author = msg.author
 		}
-		m.bodyCache[msg.key] = entry
+		m.bodyCache.set(msg.key, entry)
 		if m.detailOpen && m.detailItem != nil && cacheKey(m.detailItem) == msg.key {
 			// Preserve the current scroll position across a refresh so the user
 			// isn't yanked back to the top; SetYOffset clamps to the new content.
@@ -745,7 +751,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			break
 		}
-		m.diffCache[msg.key] = msg.diff
+		m.diffCache.set(msg.key, msg.diff)
 		if m.detailOpen && m.detailItem != nil && cacheKey(m.detailItem) == msg.key {
 			m.setDetailDiff(msg.diff)
 			m.detailDiffLoading = false
@@ -762,7 +768,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (cmdFetchBody) still pulls labels on open, so chips just aren't warmed.
 		if msg.err == nil {
 			for key, labels := range msg.labels {
-				e := m.bodyCache[key]
+				e, _ := m.bodyCache.get(key)
 				// Never clobber a full fetch's labels: once an entry carries labels
 				// (set by a full fetch, alongside the body's rendered comments and
 				// author), a later label prefetch must leave it untouched so it can't
@@ -771,7 +777,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					continue
 				}
 				e.labels = labels
-				m.bodyCache[key] = e
+				m.bodyCache.set(key, e)
 			}
 		}
 
@@ -881,7 +887,7 @@ func (m model) cachedBody(it *item) string {
 	if it == nil {
 		return ""
 	}
-	if e, ok := m.bodyCache[cacheKey(it)]; ok && e.body != "" {
+	if e, ok := m.bodyCache.get(cacheKey(it)); ok && e.body != "" {
 		return e.body
 	}
 	if it.body != "" {
@@ -922,7 +928,7 @@ func (m model) cmdPrefetchLabels() tea.Cmd {
 		// Skip items whose labels are already cached by a prior prefetch or a
 		// full detail fetch; the no-clobber guard in the labelsMsg handler is the
 		// backstop, but skipping here keeps the batch (and the round-trip) small.
-		if e, ok := m.bodyCache[key]; ok && e.labels != nil {
+		if e, ok := m.bodyCache.get(key); ok && e.labels != nil {
 			continue
 		}
 		targets = append(targets, labelTarget{key: key, number: it.number, isPR: it.type_ == "pr"})
@@ -977,7 +983,7 @@ func (m model) toggleDiff() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// Showing the diff: use the cache if present, otherwise fetch it.
-	if cached, ok := m.diffCache[cacheKey(m.detailItem)]; ok {
+	if cached, ok := m.diffCache.get(cacheKey(m.detailItem)); ok {
 		m.setDetailDiff(cached)
 		m.detailDiffLoading = false
 		m.detailFileOffsets = m.diffFileOffsets()

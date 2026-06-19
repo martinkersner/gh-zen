@@ -98,7 +98,7 @@ func TestDiffToggleFetchesAndShows(t *testing.T) {
 	if !strings.Contains(mm.detailDiff, "added line") {
 		t.Errorf("diff not stored: %q", mm.detailDiff)
 	}
-	if mm.diffCache[cacheKey(mm.detailItem)] == "" {
+	if cached, _ := mm.diffCache.get(cacheKey(mm.detailItem)); cached == "" {
 		t.Error("diff not cached")
 	}
 	if calls != 1 {
@@ -188,7 +188,7 @@ func TestDiffPrefetchedOnDetailEntry(t *testing.T) {
 		tm, _ = tm.Update(msg)
 	}
 	mm = tm.(model)
-	if mm.diffCache[cacheKey(mm.detailItem)] == "" {
+	if cached, _ := mm.diffCache.get(cacheKey(mm.detailItem)); cached == "" {
 		t.Fatal("diff was not prefetched into the cache on entry")
 	}
 	if mm.detailShowDiff {
@@ -368,8 +368,8 @@ func TestDiffRefreshRefetchesDiff(t *testing.T) {
 	if !strings.Contains(mm.detailDiff, "v2") {
 		t.Errorf("diff not refreshed: %q", mm.detailDiff)
 	}
-	if mm.diffCache[cacheKey(mm.detailItem)] != "v2\n" {
-		t.Errorf("diff cache not updated on refresh: %q", mm.diffCache[cacheKey(mm.detailItem)])
+	if cached, _ := mm.diffCache.get(cacheKey(mm.detailItem)); cached != "v2\n" {
+		t.Errorf("diff cache not updated on refresh: %q", cached)
 	}
 }
 

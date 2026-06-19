@@ -46,6 +46,19 @@ const (
 	closeReasonNotPlanned = "not planned"
 )
 
+// maxBodyCacheEntries and maxDiffCacheEntries bound the detail body and PR diff
+// caches (model.bodyCache / model.diffCache) so they can't grow without limit
+// over a long session that pages through many items. Once a cache exceeds its
+// cap the least-recently-used entry is evicted (see lruCache). The list can only
+// surface ~50 issues + ~50 PRs at a time, so 100 each comfortably keeps every
+// on-screen item (plus recently visited ones) resident while capping worst-case
+// growth. Kept here (a Go settings file) rather than inline per project
+// convention; a user-editable config is a possible follow-up.
+const (
+	maxBodyCacheEntries = 100
+	maxDiffCacheEntries = 100
+)
+
 // tickMsg is emitted by the auto-refresh ticker. Each tick triggers a refresh of
 // the current view and re-arms the ticker.
 type tickMsg time.Time
