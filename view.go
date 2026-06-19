@@ -40,6 +40,11 @@ func (m model) View() string {
 		return m.renderSettings()
 	}
 
+	// The close-issue dialog likewise replaces the underlying view while open.
+	if m.showCloseDialog {
+		return m.renderCloseDialog()
+	}
+
 	if m.detailOpen {
 		return m.renderDetail()
 	}

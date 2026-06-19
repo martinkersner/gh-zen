@@ -36,6 +36,16 @@ const loadingIndicator = "loading…"
 // sub-view is no longer blanked while loading; activity is surfaced only here.
 const loadingDiffIndicator = "loading diff…"
 
+// closeReasonCompleted and closeReasonNotPlanned are the GitHub state reasons
+// passed to `gh issue close --reason` when closing an issue from the close dialog
+// (the `c` key). They map to GitHub's CLOSED state reasons: "completed" and
+// "not planned". Kept as named constants here rather than inline so the dialog
+// wiring and the API call share one source of truth.
+const (
+	closeReasonCompleted  = "completed"
+	closeReasonNotPlanned = "not planned"
+)
+
 // tickMsg is emitted by the auto-refresh ticker. Each tick triggers a refresh of
 // the current view and re-arms the ticker.
 type tickMsg time.Time

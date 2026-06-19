@@ -26,6 +26,7 @@ type item struct {
 	type_  string  // "issue" or "pr"
 	author string  // opener's login, populated by the list fetch and the detail fetch (fetchBody)
 	labels []label // GitHub labels, populated by the detail fetch (fetchBody)
+	closed bool    // true once the issue has been closed from the TUI (see the close dialog); the list/detail prefix the title with "[closed]" to reflect it until the next refresh drops it from the OPEN-only list fetch
 }
 
 // FilterValue extends Title() with the "@author" suffix so substring search
@@ -43,7 +44,12 @@ func (i item) FilterValue() string {
 	}
 	return v
 }
-func (i item) Title() string { return fmt.Sprintf("#%d %s", i.number, i.title) }
+func (i item) Title() string {
+	if i.closed {
+		return fmt.Sprintf("#%d [closed] %s", i.number, i.title)
+	}
+	return fmt.Sprintf("#%d %s", i.number, i.title)
+}
 func (i item) Description() string { return "" }
 
 // numberStyle is the distinct color applied to the "#<number>" prefix so it

@@ -97,6 +97,16 @@ type errMsg struct {
 	err error
 }
 
+// closeIssueResultMsg carries the result of a close-issue mutation (see
+// cmdCloseIssue). number identifies the issue that was closed so the handler can
+// reflect the new state on the matching list item / open detail; err is non-nil
+// when the `gh issue close` call failed (surfaced via the model's err field
+// without crashing the TUI).
+type closeIssueResultMsg struct {
+	number int
+	err    error
+}
+
 // commentsFetchLimit caps how many issue/PR conversation comments are pulled
 // per detail view. Bounded so a long thread can't make the single round-trip
 // (and the resulting markdown render) unbounded.
@@ -324,6 +334,21 @@ func fetchDiff(number int) (string, error) {
 // open without launching a real browser (mirroring the ghDiff seam).
 var ghOpenInBrowser = func(itemType string, number int) error {
 	_, stderr, err := gh.Exec(itemType, "view", strconv.Itoa(number), "--web")
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("%s: %w", msg, err)
+		}
+		return err
+	}
+	return nil
+}
+
+// ghCloseIssue shells out to `gh issue close <number> --reason <reason>`, closing
+// the issue with the given GitHub state reason ("completed" or "not planned").
+// It is a package var so tests can stub the `gh` call and assert the close
+// without hitting the network (mirroring the ghDiff / ghOpenInBrowser seams).
+var ghCloseIssue = func(number int, reason string) error {
+	_, stderr, err := gh.Exec("issue", "close", strconv.Itoa(number), "--reason", reason)
 	if err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return fmt.Errorf("%s: %w", msg, err)

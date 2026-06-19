@@ -60,13 +60,19 @@ func (m model) currentShortcuts() []shortcut {
 			shortcut{"g/G", "top/bottom"},
 			shortcut{"/", "search"},
 			shortcut{"o", "open in browser"},
+		)
+		// Issues can be closed from the detail view; PRs cannot.
+		if m.detailItem != nil && m.detailItem.type_ == "issue" {
+			s = append(s, shortcut{"c", "close issue"})
+		}
+		s = append(s,
 			shortcut{"r", "refresh"},
 			shortcut{"?", "toggle help"},
 		)
 		return s
 	}
 
-	return []shortcut{
+	s := []shortcut{
 		{"q/esc/ctrl+g", "quit"},
 		{"tab", "switch tab"},
 		{"j/k or ctrl+n/ctrl+p", "down/up"},
@@ -74,10 +80,17 @@ func (m model) currentShortcuts() []shortcut {
 		{"/", "filter"},
 		{"enter", "open"},
 		{"o", "open in browser"},
-		{"t", "theme"},
-		{"r", "refresh"},
-		{"?", "toggle help"},
 	}
+	// `c` closes an issue; it applies only on the Issues tab.
+	if m.activeTab == tabIssues {
+		s = append(s, shortcut{"c", "close issue"})
+	}
+	s = append(s,
+		shortcut{"t", "theme"},
+		shortcut{"r", "refresh"},
+		shortcut{"?", "toggle help"},
+	)
+	return s
 }
 
 // renderHelp renders the shortcuts overlay: a bordered box listing every

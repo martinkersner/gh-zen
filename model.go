@@ -99,6 +99,16 @@ type model struct {
 	settingsCursor int
 	settingsPrev   Palette
 
+	// showCloseDialog toggles the close-issue confirmation dialog (opened with `c`
+	// over a focused issue in list or detail view). closeCursor indexes into
+	// closeChoices (Completed / Not planned / Cancel); closeDialogItem is the issue
+	// the dialog acts on, captured when it opens so the choice closes the right
+	// issue even if the selection later changes. enter fires the close mutation
+	// (or, for Cancel, just dismisses); esc/ctrl+g/`c` dismiss with no change.
+	showCloseDialog bool
+	closeCursor     int
+	closeDialogItem *item
+
 	// Async state
 	loading bool
 	err     error
@@ -203,6 +213,24 @@ func (m *model) refreshCurrentView(background bool) tea.Cmd {
 		m.loading = true
 	}
 	return fetchIssuesAndPRs()
+}
+
+// openCloseDialog opens the close-issue confirmation dialog over the given item,
+// seeding the cursor on the first choice (Completed) and capturing the item so
+// the eventual choice closes the right issue. It is a no-op for a nil item (empty
+// list / nothing focused), a PR (closing PRs is out of scope), and an item
+// already marked closed, so the dialog only ever appears over a closable issue.
+// Pointer receiver so the state set persists in the caller.
+func (m *model) openCloseDialog(it *item) {
+	if it == nil || it.type_ != "issue" || it.closed {
+		return
+	}
+	// Copy so a later list refresh / selection change can't mutate the captured
+	// target out from under the open dialog.
+	captured := *it
+	m.showCloseDialog = true
+	m.closeCursor = 0
+	m.closeDialogItem = &captured
 }
 
 func (m *model) setListItems(tabIdx tab, items []list.Item) {
@@ -325,6 +353,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// The close-issue dialog captures keys while open: up/down (and j/k,
+		// ctrl+n/ctrl+p) move the choice; enter selects (Completed/Not planned
+		// fire the close mutation, Cancel just dismisses); esc/ctrl+g/`c` dismiss
+		// with no change; ctrl+c still quits; every other key is swallowed so it
+		// can't act on the obscured view underneath.
+		if m.showCloseDialog {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "down", "j", "ctrl+n":
+				if m.closeCursor < len(closeChoices)-1 {
+					m.closeCursor++
+				}
+			case "up", "k", "ctrl+p":
+				if m.closeCursor > 0 {
+					m.closeCursor--
+				}
+			case "enter":
+				choice := closeChoices[m.closeCursor]
+				it := m.closeDialogItem
+				m.showCloseDialog = false
+				m.closeDialogItem = nil
+				// Cancel (empty reason) just dismisses; a real reason fires the
+				// close mutation against the issue captured when the dialog opened.
+				if choice.reason == "" || it == nil {
+					return m, nil
+				}
+				return m, cmdCloseIssue(it.number, choice.reason)
+			case "esc", "ctrl+g", "c":
+				m.showCloseDialog = false
+				m.closeDialogItem = nil
+			}
+			return m, nil
+		}
+
 		if m.detailOpen {
 			// ctrl+c always quits, even mid-search.
 			if msg.String() == "ctrl+c" {
@@ -441,6 +504,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Open the item shown in the detail view on GitHub. No-op if
 				// nothing is open (guarded in cmdOpenInBrowser).
 				return m, m.cmdOpenInBrowser(m.detailItem)
+			case "c":
+				// Open the close-issue dialog over the focused issue. No-op for
+				// PRs (closing PRs is out of scope) and for an already-closed item.
+				m.openCloseDialog(m.detailItem)
+				return m, nil
 			}
 			// Forward scroll keys (arrows, pgup/pgdn, j/k) to the viewport.
 			var cmd tea.Cmd
@@ -493,6 +561,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Open the highlighted item on GitHub. No-op on an empty list
 			// (selectedItem is nil; guarded in cmdOpenInBrowser).
 			return m, m.cmdOpenInBrowser(m.selectedItem())
+		case "c":
+			// Open the close-issue dialog over the highlighted issue. No-op on
+			// the PRs tab, on an empty list, or on an already-closed item.
+			m.openCloseDialog(m.selectedItem())
+			return m, nil
 		case "tab", "l", "right":
 			m.activeTab = (m.activeTab + 1) % tab(len(m.tabs))
 			m.updateListSize()
@@ -700,6 +773,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.err = msg.err
 
+	case closeIssueResultMsg:
+		if msg.err != nil {
+			// Surface the failure without crashing the TUI; the next refresh
+			// re-fetches the list so a still-open issue reappears unchanged.
+			m.err = msg.err
+			break
+		}
+		// Reflect the closed state immediately: mark the matching issue list item
+		// (so its row shows "[closed]") and the open detail item if it's the same
+		// issue. A subsequent OPEN-only list refresh drops the item entirely.
+		m.markIssueClosed(msg.number)
+
 	case tickMsg:
 		// Auto-refresh the current view, then re-arm the ticker. Skip the data
 		// fetch while the user is mid-filter so the list isn't reshuffled under
@@ -741,6 +826,27 @@ func (m *model) updateListSize() {
 	listHeight := m.height - 2 - statusBarHeight
 	m.issueList.SetSize(m.width, listHeight)
 	m.prList.SetSize(m.width, listHeight)
+}
+
+// markIssueClosed flips the closed flag on the issue with the given number in the
+// issues list (so its row renders the "[closed]" prefix) and on the open detail
+// item when it's the same issue (so the header reflects it too). Items are stored
+// by value in the list, so the matching entry is rewritten in place via Select +
+// SetItem, preserving the current selection and the rest of the list. A no-match
+// is a harmless no-op.
+func (m *model) markIssueClosed(number int) {
+	items := m.issueList.Items()
+	for i, li := range items {
+		it, ok := li.(item)
+		if !ok || it.type_ != "issue" || it.number != number {
+			continue
+		}
+		it.closed = true
+		m.issueList.SetItem(i, it)
+	}
+	if m.detailOpen && m.detailItem != nil && m.detailItem.type_ == "issue" && m.detailItem.number == number {
+		m.detailItem.closed = true
+	}
 }
 
 func (m model) selectedItem() *item {
