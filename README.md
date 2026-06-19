@@ -14,8 +14,6 @@ gh extension install martinkersner/gh-zen
 gh zen
 ```
 
-Press `q` to quit.
-
 ## Development
 
 ```bash
