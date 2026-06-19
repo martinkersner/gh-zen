@@ -88,6 +88,13 @@ func (c *githubConn) resolve() (graphQLClient, repoInfo, error) {
 type dataMsg struct {
 	issues []list.Item
 	prs    []list.Item
+	// Total open issues/PRs on GitHub (connection totalCount), which can exceed
+	// the fetched node count since the query caps at first: 50. The tabs display
+	// these so the bracket reflects the repo's real open count, not just what was
+	// fetched. Zero on the test-constructed dataMsgs that omit them; tabCount
+	// falls back to the fetched length in that case.
+	issueTotal int
+	prTotal    int
 }
 
 type bodyMsg struct {
@@ -420,6 +427,7 @@ var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 			query($owner: String!, $repo: String!) {
 				repository(owner: $owner, name: $repo) {
 					issues(first: 50, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+						totalCount
 						nodes {
 							number
 							title
@@ -428,6 +436,7 @@ var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 						}
 					}
 					pullRequests(first: 50, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+						totalCount
 						nodes {
 							number
 							title
@@ -454,10 +463,12 @@ var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 		type response struct {
 			Repository struct {
 				Issues struct {
-					Nodes []node `json:"nodes"`
+					TotalCount int    `json:"totalCount"`
+					Nodes      []node `json:"nodes"`
 				} `json:"issues"`
 				PullRequests struct {
-					Nodes []node `json:"nodes"`
+					TotalCount int    `json:"totalCount"`
+					Nodes      []node `json:"nodes"`
 				} `json:"pullRequests"`
 			} `json:"repository"`
 		}
@@ -475,6 +486,11 @@ var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 			prs = append(prs, item{number: n.Number, title: n.Title, body: n.Body, type_: "pr", author: n.Author.Login})
 		}
 
-		return dataMsg{issues: issues, prs: prs}
+		return dataMsg{
+			issues:     issues,
+			prs:        prs,
+			issueTotal: resp.Repository.Issues.TotalCount,
+			prTotal:    resp.Repository.PullRequests.TotalCount,
+		}
 	}
 }

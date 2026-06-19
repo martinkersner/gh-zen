@@ -39,6 +39,36 @@ func TestTabCountsAfterFetch(t *testing.T) {
 	}
 }
 
+// The tab brackets show the repo's true open total (totalCount), which can
+// exceed the fetched item count since the list query caps at 50.
+func TestTabCountsShowTotalNotFetched(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	issues := []list.Item{
+		item{number: 1, title: "a", type_: "issue"},
+		item{number: 2, title: "b", type_: "issue"},
+	}
+	prs := []list.Item{item{number: 3, title: "c", type_: "pr"}}
+	tm, _ = tm.Update(dataMsg{issues: issues, prs: prs, issueTotal: 200, prTotal: 50})
+
+	mm := tm.(model)
+	if got := mm.tabCount(tabIssues); got != 200 {
+		t.Errorf("tabCount(issues) = %d, want 200", got)
+	}
+	if got := mm.tabCount(tabPRs); got != 50 {
+		t.Errorf("tabCount(prs) = %d, want 50", got)
+	}
+	tabs := mm.renderTabs()
+	if !strings.Contains(tabs, "Issues (200)") {
+		t.Errorf("tabs missing %q: %q", "Issues (200)", tabs)
+	}
+	if !strings.Contains(tabs, "PRs (50)") {
+		t.Errorf("tabs missing %q: %q", "PRs (50)", tabs)
+	}
+}
+
 // A blank line separates the tab row from the list content (issue #121): line 0
 // is the tabs, line 1 is blank, and the first list item lands on line 2.
 func TestBlankLineBetweenTabsAndList(t *testing.T) {

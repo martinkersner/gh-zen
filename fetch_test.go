@@ -248,8 +248,8 @@ func TestFetchBodyQueryError(t *testing.T) {
 func TestFetchIssuesAndPRsSuccess(t *testing.T) {
 	fake := &fakeGraphQLClient{
 		respJSON: `{"repository":{
-			"issues":{"nodes":[{"number":11,"title":"issue one","body":"ibody"}]},
-			"pullRequests":{"nodes":[{"number":21,"title":"pr one","body":"pbody"}]}
+			"issues":{"totalCount":42,"nodes":[{"number":11,"title":"issue one","body":"ibody"}]},
+			"pullRequests":{"totalCount":7,"nodes":[{"number":21,"title":"pr one","body":"pbody"}]}
 		}}`,
 	}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
@@ -269,6 +269,9 @@ func TestFetchIssuesAndPRsSuccess(t *testing.T) {
 	gotPR := data.prs[0].(item)
 	if gotPR.number != 21 || gotPR.title != "pr one" || gotPR.body != "pbody" || gotPR.type_ != "pr" {
 		t.Errorf("pr item = %+v", gotPR)
+	}
+	if data.issueTotal != 42 || data.prTotal != 7 {
+		t.Errorf("totals = issues %d, prs %d; want 42, 7", data.issueTotal, data.prTotal)
 	}
 	gotVars := fake.lastVars()
 	if got := gotVars["owner"]; got != testRepoOwner {

@@ -34,6 +34,13 @@ type model struct {
 	issueList list.Model
 	prList    list.Model
 
+	// Total open issues/PRs on GitHub from the last fetch's connection
+	// totalCount, shown in the tab brackets. These can exceed the fetched item
+	// count (the query caps at 50); tabCount falls back to the fetched length
+	// when a total is unknown (zero).
+	issueTotal int
+	prTotal    int
+
 	// Detail pane
 	detailOpen     bool
 	detailLoading  bool
@@ -660,6 +667,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		prIdx := m.prList.Index()
 		m.setListItems(tabIssues, msg.issues)
 		m.setListItems(tabPRs, msg.prs)
+		m.issueTotal = msg.issueTotal
+		m.prTotal = msg.prTotal
 		restoreIndex(&m.issueList, issueIdx)
 		restoreIndex(&m.prList, prIdx)
 		m.updateListSize()

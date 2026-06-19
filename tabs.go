@@ -25,14 +25,23 @@ func (m model) renderTabs() string {
 	return lipgloss.JoinHorizontal(lipgloss.Left, tabs...)
 }
 
-// tabCount returns the number of items fetched for the given tab.
+// tabCount returns the count shown in a tab's brackets: the repo's true open
+// total (connection totalCount) when known, which can exceed the fetched item
+// count since the query caps at 50. Falls back to the fetched length when the
+// total is unknown (zero) — e.g. before the first fetch or in tests that build
+// a dataMsg without totals — so the count never under-reports what's on screen.
 func (m model) tabCount(t tab) int {
+	var total, fetched int
 	switch t {
 	case tabPRs:
-		return len(m.prList.Items())
+		total, fetched = m.prTotal, len(m.prList.Items())
 	default:
-		return len(m.issueList.Items())
+		total, fetched = m.issueTotal, len(m.issueList.Items())
 	}
+	if total > fetched {
+		return total
+	}
+	return fetched
 }
 
 // tabCountLabel renders the bracket contents for a tab: "?" while the initial
