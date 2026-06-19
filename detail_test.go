@@ -593,8 +593,8 @@ func TestDetailReopenPrefetchHasNoLabels(t *testing.T) {
 
 	// Only a prefetch has landed (bare list body, no labels).
 	tm, _ = tm.Update(bodyMsg{key: key, body: "list body", prefetch: true})
-	if labels := tm.(model).bodyCache[key].labels; labels != nil {
-		t.Errorf("prefetch should cache no labels, got %v", labels)
+	if e, _ := tm.(model).bodyCache.get(key); e.labels != nil {
+		t.Errorf("prefetch should cache no labels, got %v", e.labels)
 	}
 
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEnter})

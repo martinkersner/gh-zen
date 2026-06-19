@@ -210,8 +210,8 @@ func TestPrefetchDoesNotClobberFullBody(t *testing.T) {
 	// A late prefetch (bare body) arrives afterwards; it must be ignored.
 	tm, _ = tm.Update(bodyMsg{key: key, body: "list body", prefetch: true})
 
-	if got := tm.(model).bodyCache[key].body; got != full {
-		t.Errorf("prefetch clobbered full body+comments:\n got %q\nwant %q", got, full)
+	if e, _ := tm.(model).bodyCache.get(key); e.body != full {
+		t.Errorf("prefetch clobbered full body+comments:\n got %q\nwant %q", e.body, full)
 	}
 }
 
@@ -230,7 +230,7 @@ func TestLabelsPrefetchWarmsEmptyEntry(t *testing.T) {
 	want := []label{{name: "bug", color: "d73a4a"}}
 	tm, _ = tm.Update(labelsMsg{labels: map[string][]label{key: want}})
 
-	e := tm.(model).bodyCache[key]
+	e, _ := tm.(model).bodyCache.get(key)
 	if e.body != "list body" {
 		t.Errorf("labels prefetch dropped the cached body: %q", e.body)
 	}
@@ -258,7 +258,7 @@ func TestLabelsPrefetchDoesNotClobberFullFetch(t *testing.T) {
 		key: {{name: "stale", color: "000000"}},
 	}})
 
-	e := tm.(model).bodyCache[key]
+	e, _ := tm.(model).bodyCache.get(key)
 	if e.body != full {
 		t.Errorf("label prefetch clobbered full body+comments:\n got %q\nwant %q", e.body, full)
 	}
@@ -282,7 +282,7 @@ func TestLabelsPrefetchErrorIsIgnored(t *testing.T) {
 
 	tm, _ = tm.Update(labelsMsg{err: errFake{}})
 
-	e := tm.(model).bodyCache[key]
+	e, _ := tm.(model).bodyCache.get(key)
 	if e.body != "list body" {
 		t.Errorf("failed label prefetch disturbed the cache: %q", e.body)
 	}
@@ -307,7 +307,7 @@ func TestCmdPrefetchLabelsTargetsVisibleUncached(t *testing.T) {
 
 	// Pre-cache #12's labels so only #11 should be fetched.
 	mm := tm.(model)
-	mm.bodyCache["issue_12"] = bodyEntry{labels: []label{{name: "x", color: "y"}}}
+	mm.bodyCache.set("issue_12", bodyEntry{labels: []label{{name: "x", color: "y"}}})
 
 	cmd := mm.cmdPrefetchLabels()
 	if cmd == nil {
@@ -329,7 +329,7 @@ func TestCmdPrefetchLabelsTargetsVisibleUncached(t *testing.T) {
 	}
 
 	// With every visible item now cached, the cmd is a no-op (nil).
-	mm.bodyCache["issue_11"] = bodyEntry{labels: []label{{name: "bug", color: "d73a4a"}}}
+	mm.bodyCache.set("issue_11", bodyEntry{labels: []label{{name: "bug", color: "d73a4a"}}})
 	if got := mm.cmdPrefetchLabels(); got != nil {
 		t.Error("expected nil cmd when all visible items are cached")
 	}
