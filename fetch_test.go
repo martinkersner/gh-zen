@@ -282,6 +282,48 @@ func TestFetchIssuesAndPRsSuccess(t *testing.T) {
 	}
 }
 
+func TestFetchMoreItemsIssues(t *testing.T) {
+	fake := &fakeGraphQLClient{
+		respJSON: `{"repository":{
+			"issues":{"pageInfo":{"endCursor":"C2","hasNextPage":true},"nodes":[{"number":99,"title":"page two","body":"b2"}]}
+		}}`,
+	}
+	withFakeGitHub(t, fake, nil, testRepo(), nil)
+
+	msg := fetchMoreItems(&githubConn{}, tabIssues, "C1")()
+	more, ok := msg.(moreDataMsg)
+	if !ok {
+		t.Fatalf("expected moreDataMsg, got %T (%v)", msg, msg)
+	}
+	if more.tab != tabIssues || more.endCursor != "C2" || !more.hasNextPage {
+		t.Errorf("moreDataMsg = %+v", more)
+	}
+	if len(more.items) != 1 {
+		t.Fatalf("got %d items, want 1", len(more.items))
+	}
+	got := more.items[0].(item)
+	if got.number != 99 || got.title != "page two" || got.type_ != "issue" {
+		t.Errorf("item = %+v", got)
+	}
+	if after := fake.lastVars()["after"]; after != "C1" {
+		t.Errorf("after var = %v, want C1", after)
+	}
+}
+
+func TestFetchMoreItemsPRsError(t *testing.T) {
+	wantErr := errors.New("rate limited")
+	withFakeGitHub(t, &fakeGraphQLClient{err: wantErr}, nil, testRepo(), nil)
+
+	msg := fetchMoreItems(&githubConn{}, tabPRs, "C1")()
+	more, ok := msg.(moreDataMsg)
+	if !ok {
+		t.Fatalf("expected moreDataMsg, got %T", msg)
+	}
+	if more.tab != tabPRs || !errors.Is(more.err, wantErr) {
+		t.Errorf("moreDataMsg = %+v, want tab=PRs err=%v", more, wantErr)
+	}
+}
+
 func TestFetchIssuesAndPRsClientError(t *testing.T) {
 	wantErr := errors.New("no auth token")
 	withFakeGitHub(t, nil, wantErr, testRepo(), nil)
