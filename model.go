@@ -784,6 +784,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (so its row shows "[closed]") and the open detail item if it's the same
 		// issue. A subsequent OPEN-only list refresh drops the item entirely.
 		m.markIssueClosed(msg.number)
+		// If the just-closed issue is the one open in detail, drop back to the
+		// list view (mirroring the esc/q exit): the user closed it, so there's
+		// nothing left to act on in detail. Reset the same view flags esc does
+		// so no diff/overview/search/loading state leaks across the exit.
+		if m.detailOpen && m.detailItem != nil && m.detailItem.type_ == "issue" && m.detailItem.number == msg.number {
+			m.detailOpen = false
+			m.detailItem = nil
+			m.detailShowDiff = false
+			m.detailSplitView = false
+			m.detailShowOverview = false
+			m.detailLoading = false
+			m.detailDiffLoading = false
+			m.exitDetailSearch()
+		}
 
 	case tickMsg:
 		// Auto-refresh the current view, then re-arm the ticker. Skip the data
