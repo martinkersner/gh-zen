@@ -144,7 +144,7 @@ func TestLRURecencyOrder(t *testing.T) {
 	c.set("b", 2)
 	c.set("c", 3)
 	// Order MRU->LRU: c, b, a
-	c.get("a") // promote a -> a, c, b
+	c.get("a")    // promote a -> a, c, b
 	c.set("d", 4) // over cap: b evicted -> d, a, c
 
 	got := c.keys()
