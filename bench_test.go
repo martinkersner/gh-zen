@@ -19,6 +19,14 @@ import (
 const (
 	benchWaitTimeout  = 10 * time.Second
 	benchFinalTimeout = 10 * time.Second
+	// benchCheckInterval is how often waitForBench polls the program's output.
+	// teatest's default is 50ms, which dominates the teatest benchmark timings:
+	// the transition work is microseconds, but each WaitFor that misses on its
+	// first poll eats a full 50ms sleep, quantizing every reported ns/op to a
+	// multiple of 50ms. Polling at 1ms drops that floor so the e2e timings track
+	// real launch/transition latency. This only changes poll granularity, not the
+	// benchWaitTimeout ceiling, so the missed-render safety guard is unaffected.
+	benchCheckInterval = time.Millisecond
 )
 
 // Performance benchmarks for the TUI. They split into two layers:
@@ -168,7 +176,7 @@ func waitForBench(b *testing.B, tm *teatest.TestModel, needle string) {
 	b.Helper()
 	teatest.WaitFor(b, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte(needle))
-	}, teatest.WithDuration(benchWaitTimeout))
+	}, teatest.WithDuration(benchWaitTimeout), teatest.WithCheckInterval(benchCheckInterval))
 }
 
 // quitBench tears down a teatest program and waits for it to finish, bounded by
