@@ -695,6 +695,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// clobber a key a full fetch already populated with body+comments (a tick
 		// can enqueue a prefetch while a full fetch is in flight).
 		if msg.prefetch {
+			// has (not get): we break out immediately without using the value, so a
+			// recency promotion here would be spurious — don't touch the LRU on a
+			// guard that doesn't surface the entry.
 			if m.bodyCache.has(msg.key) {
 				break
 			}
