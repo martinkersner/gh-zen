@@ -741,6 +741,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Newly appended rows are now near the cursor; warm their labels.
 		cmds = append(cmds, m.cmdPrefetchLabels())
 
+	case visibleRefreshMsg:
+		// In-place deep refresh: patch the title/closed of already-loaded rows
+		// from the by-number fetch. Count and order are untouched (so the cursor
+		// and loaded pages survive); only changed rows trigger a SetItems.
+		if msg.err != nil || len(msg.items) == 0 {
+			break
+		}
+		l := &m.issueList
+		if msg.tab == tabPRs {
+			l = &m.prList
+		}
+		cur := l.Items()
+		next := make([]list.Item, len(cur))
+		changed := false
+		for i, it := range cur {
+			ii := it.(item)
+			if r, ok := msg.items[ii.number]; ok && (ii.title != r.title || ii.closed != r.closed) {
+				ii.title, ii.closed = r.title, r.closed
+				changed = true
+			}
+			next[i] = ii
+		}
+		if changed {
+			idx := l.Index()
+			m.setListItems(msg.tab, next)
+			restoreIndex(l, idx)
+		}
+
 	case bodyMsg:
 		if msg.err != nil {
 			// A failed body fetch (e.g. background refresh) keeps the cached
@@ -871,16 +899,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
-		// Auto-refresh the current view, then re-arm the ticker. Skip the list
-		// fetch while the user is mid-filter (so the list isn't reshuffled under
-		// them) or once extra pages have been lazily loaded (a page-1 refetch
-		// would clobber the appended pages and the scroll position — manual `r`
-		// is the way to reload from the top). The detail-view body refresh is
+		// Auto-refresh the current view, then re-arm the ticker. Skip the fetch
+		// while the user is mid-filter so the list isn't reshuffled under them.
+		// Once extra pages have been lazily loaded, a full page-1 refetch would
+		// reorder the list and reset pagination, so instead refresh only the
+		// on-screen rows in place (by number) — the scroll position and loaded
+		// pages survive, at the cost of not surfacing brand-new items until a
+		// manual `r` reloads from the top. The detail-view body refresh is
 		// unaffected. The ticker keeps running regardless.
 		if m.detailOpen {
 			cmds = append(cmds, m.refreshCurrentView(true))
-		} else if !m.currentList().SettingFilter() && !m.paginated() {
-			cmds = append(cmds, m.refreshCurrentView(true))
+		} else if !m.currentList().SettingFilter() {
+			if m.paginated() {
+				cmds = append(cmds, m.cmdRefreshVisible())
+			} else {
+				cmds = append(cmds, m.refreshCurrentView(true))
+			}
 		}
 		cmds = append(cmds, tickCmd())
 		return m, tea.Batch(cmds...)
@@ -1062,6 +1096,27 @@ func (m model) cmdPrefetchLabels() tea.Cmd {
 		labels, err := fetchLabels(client, repo, targets)
 		return labelsMsg{labels: labels, err: err}
 	}
+}
+
+// cmdRefreshVisible re-fetches the current state of just the active tab's
+// on-screen rows (by number) for the deep auto-refresh. The window is read from
+// the paginator (GetSliceBounds over the visible items), mirroring
+// cmdPrefetchLabels, so the cost is bounded by screen height rather than list
+// depth. Returns nil when nothing is on screen.
+func (m model) cmdRefreshVisible() tea.Cmd {
+	cur := m.currentList()
+	visible := cur.VisibleItems()
+	start, end := cur.Paginator.GetSliceBounds(len(visible))
+	var numbers []int
+	for i := start; i < end; i++ {
+		if it, ok := visible[i].(item); ok {
+			numbers = append(numbers, it.number)
+		}
+	}
+	if len(numbers) == 0 {
+		return nil
+	}
+	return fetchVisibleItems(m.conn, m.activeTab, numbers)
 }
 
 // cmdFetchBody re-fetches the focused item's content (the body) from GitHub. PR

@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -108,13 +109,15 @@ func TestNoLoadMoreWhenNoNextPage(t *testing.T) {
 	}
 }
 
-// Once extra pages are loaded, the background auto-refresh tick must skip the
-// list refetch so it can't clobber the appended pages / scroll position.
-func TestTickSkipsRefreshWhenPaginated(t *testing.T) {
-	fetches := 0
+// Once extra pages are loaded, the background tick must refresh the visible
+// window in place (fetchVisibleItems) rather than refetching the whole list
+// (fetchIssuesAndPRs) — which would reorder it and reset pagination.
+func TestTickRefreshesVisibleWhenPaginated(t *testing.T) {
+	fullFetches, visibleFetches := 0, 0
+	var visibleTab tab
 	origFetch := fetchIssuesAndPRs
 	fetchIssuesAndPRs = func(*githubConn) tea.Cmd {
-		fetches++
+		fullFetches++
 		return func() tea.Msg { return dataMsg{} }
 	}
 	origMore := fetchMoreItems
@@ -123,18 +126,24 @@ func TestTickSkipsRefreshWhenPaginated(t *testing.T) {
 			return moreDataMsg{tab: tb, items: mkItems(50, "issue"), endCursor: "C2", hasNextPage: true}
 		}
 	}
+	origVisible := fetchVisibleItems
+	fetchVisibleItems = func(_ *githubConn, tb tab, _ []int) tea.Cmd {
+		visibleFetches++
+		visibleTab = tb
+		return func() tea.Msg { return visibleRefreshMsg{tab: tb} }
+	}
 	t.Cleanup(func() {
 		fetchIssuesAndPRs = origFetch
 		fetchMoreItems = origMore
+		fetchVisibleItems = origVisible
 	})
 
 	tm := initialPage(t, 50)
 
-	// Before paginating, a tick dispatches a list refresh.
-	before := fetches
+	// Before paginating, a tick dispatches a full list refresh, not a visible one.
 	tm, _ = tm.Update(tickMsg{})
-	if fetches != before+1 {
-		t.Fatalf("tick at page 1 did not refresh (count %d -> %d)", before, fetches)
+	if fullFetches != 1 || visibleFetches != 0 {
+		t.Fatalf("tick at page 1: full=%d visible=%d, want 1/0", fullFetches, visibleFetches)
 	}
 
 	// Load a second page (deliver the page the G-triggered fetch would yield).
@@ -144,11 +153,50 @@ func TestTickSkipsRefreshWhenPaginated(t *testing.T) {
 		t.Fatal("setup: expected paginated() true after loading a page")
 	}
 
-	// Now a tick must NOT dispatch the list refresh.
-	before = fetches
+	// Now a tick must refresh the visible window, not refetch the whole list.
 	tm, _ = tm.Update(tickMsg{})
-	if fetches != before {
-		t.Errorf("tick dispatched a list refresh while paginated (count %d -> %d)", before, fetches)
+	if fullFetches != 1 {
+		t.Errorf("tick refetched the whole list while paginated (full=%d, want 1)", fullFetches)
+	}
+	if visibleFetches != 1 || visibleTab != tabIssues {
+		t.Errorf("tick visible-refresh: count=%d tab=%v, want 1/issues", visibleFetches, visibleTab)
+	}
+}
+
+// The in-place visible refresh patches title/closed on the matching loaded rows
+// without changing count, order, the cursor, or other fields (author/body).
+func TestVisibleRefreshPatchesInPlace(t *testing.T) {
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: []list.Item{
+		item{number: 1, title: "old one", type_: "issue", author: "alice", body: "b1"},
+		item{number: 2, title: "old two", type_: "issue", author: "bob", body: "b2"},
+	}})
+	// Move the cursor off row 0 so we can assert it's preserved.
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	idxBefore := tm.(model).issueList.Index()
+
+	tm, _ = tm.Update(visibleRefreshMsg{tab: tabIssues, items: map[int]refreshedItem{
+		1: {title: "new one", closed: true},
+		2: {title: "old two"}, // unchanged
+	}})
+
+	mm := tm.(model)
+	items := mm.issueList.Items()
+	if len(items) != 2 {
+		t.Fatalf("item count changed: %d, want 2", len(items))
+	}
+	got1 := items[0].(item)
+	if got1.title != "new one" || !got1.closed {
+		t.Errorf("row 0 not patched: %+v", got1)
+	}
+	// Untouched fields must survive the patch.
+	if got1.author != "alice" || got1.body != "b1" {
+		t.Errorf("row 0 lost fields: %+v", got1)
+	}
+	if mm.issueList.Index() != idxBefore {
+		t.Errorf("cursor moved: %d -> %d", idxBefore, mm.issueList.Index())
 	}
 }
 

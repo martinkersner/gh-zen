@@ -324,6 +324,54 @@ func TestFetchMoreItemsPRsError(t *testing.T) {
 	}
 }
 
+func TestFetchVisibleItems(t *testing.T) {
+	fake := &fakeGraphQLClient{
+		respJSON: `{"repository":{
+			"n0":{"number":1,"title":"fresh one","state":"OPEN"},
+			"n1":{"number":2,"title":"fresh two","state":"CLOSED"},
+			"n2":null
+		}}`,
+	}
+	withFakeGitHub(t, fake, nil, testRepo(), nil)
+
+	msg := fetchVisibleItems(&githubConn{}, tabIssues, []int{1, 2, 3})()
+	vr, ok := msg.(visibleRefreshMsg)
+	if !ok {
+		t.Fatalf("expected visibleRefreshMsg, got %T (%v)", msg, msg)
+	}
+	if vr.tab != tabIssues {
+		t.Errorf("tab = %v, want issues", vr.tab)
+	}
+	if len(vr.items) != 2 {
+		t.Fatalf("got %d items, want 2 (null skipped)", len(vr.items))
+	}
+	if got := vr.items[1]; got.title != "fresh one" || got.closed {
+		t.Errorf("item 1 = %+v, want {fresh one, open}", got)
+	}
+	if got := vr.items[2]; got.title != "fresh two" || !got.closed {
+		t.Errorf("item 2 = %+v, want {fresh two, closed}", got)
+	}
+	// The aliased query must select the issue field for the issues tab.
+	if q := fake.lastQuery(); !strings.Contains(q, "issue(number: 1)") {
+		t.Errorf("query missing aliased issue selection: %q", q)
+	}
+}
+
+func TestFetchVisibleItemsEmpty(t *testing.T) {
+	// No numbers → no round-trip, empty result.
+	fake := &fakeGraphQLClient{err: errors.New("should not be called")}
+	withFakeGitHub(t, fake, nil, testRepo(), nil)
+
+	msg := fetchVisibleItems(&githubConn{}, tabPRs, nil)()
+	vr, ok := msg.(visibleRefreshMsg)
+	if !ok {
+		t.Fatalf("expected visibleRefreshMsg, got %T", msg)
+	}
+	if vr.err != nil || len(vr.items) != 0 {
+		t.Errorf("empty fetch = %+v, want no err / no items", vr)
+	}
+}
+
 func TestFetchIssuesAndPRsClientError(t *testing.T) {
 	wantErr := errors.New("no auth token")
 	withFakeGitHub(t, nil, wantErr, testRepo(), nil)

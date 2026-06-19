@@ -116,6 +116,24 @@ type moreDataMsg struct {
 	err         error
 }
 
+// refreshedItem is the freshly-fetched mutable state of one already-loaded row.
+type refreshedItem struct {
+	title  string
+	closed bool
+}
+
+// visibleRefreshMsg delivers an in-place refresh of the on-screen rows for a
+// single tab, keyed by issue/PR number. It backs the deep auto-refresh: once
+// extra pages are loaded the background tick refreshes just the visible window
+// (by number) and patches title/closed in place, rather than refetching the
+// whole list (which would reorder it and reset pagination). items is nil/empty
+// when nothing came back.
+type visibleRefreshMsg struct {
+	tab   tab
+	items map[int]refreshedItem
+	err   error
+}
+
 type bodyMsg struct {
 	key    string
 	body   string
@@ -605,5 +623,64 @@ var fetchMoreItems = func(conn *githubConn, t tab, after string) tea.Cmd {
 			endCursor:   c.PageInfo.EndCursor,
 			hasNextPage: c.PageInfo.HasNextPage,
 		}
+	}
+}
+
+// fetchVisibleItems returns the cmd that re-fetches the current state (title +
+// open/closed) of a specific set of already-loaded rows by number, in one
+// aliased round-trip (n0, n1, ... mirroring fetchLabels). It backs the deep
+// auto-refresh: refreshing only the on-screen window keeps the cost bounded by
+// screen height (not list depth) and avoids the reorder/clobber a full refetch
+// would cause. It is a package var so tests can stub it.
+var fetchVisibleItems = func(conn *githubConn, t tab, numbers []int) tea.Cmd {
+	return func() tea.Msg {
+		if len(numbers) == 0 {
+			return visibleRefreshMsg{tab: t, items: map[int]refreshedItem{}}
+		}
+		client, repo, err := conn.resolve()
+		if err != nil {
+			return visibleRefreshMsg{tab: t, err: err}
+		}
+
+		field := "issue"
+		if t == tabPRs {
+			field = "pullRequest"
+		}
+		var b strings.Builder
+		b.WriteString("query($owner: String!, $repo: String!) {\n")
+		b.WriteString("\trepository(owner: $owner, name: $repo) {\n")
+		for i, n := range numbers {
+			fmt.Fprintf(&b, "\t\tn%d: %s(number: %d) { number title state }\n", i, field, n)
+		}
+		b.WriteString("\t}\n}")
+		variables := map[string]interface{}{
+			"owner": repo.Owner,
+			"repo":  repo.Name,
+		}
+
+		type aliased struct {
+			Number int    `json:"number"`
+			Title  string `json:"title"`
+			State  string `json:"state"`
+		}
+		// The aliased fields share one shape; decode the repository object into an
+		// alias->node map. A null entry (deleted item) is skipped.
+		var resp struct {
+			Repository map[string]*aliased `json:"repository"`
+		}
+		if err := client.Do(b.String(), variables, &resp); err != nil {
+			return visibleRefreshMsg{tab: t, err: err}
+		}
+
+		items := make(map[int]refreshedItem, len(resp.Repository))
+		for _, n := range resp.Repository {
+			if n == nil {
+				continue
+			}
+			// state is OPEN for live items; CLOSED (issues/PRs) or MERGED (PRs)
+			// otherwise — anything non-OPEN renders the "[closed]" prefix.
+			items[n.Number] = refreshedItem{title: n.Title, closed: n.State != "OPEN"}
+		}
+		return visibleRefreshMsg{tab: t, items: items}
 	}
 }
