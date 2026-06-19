@@ -54,7 +54,7 @@ func stubFetch(t *testing.T) {
 	t.Helper()
 	origFetch := fetchIssuesAndPRs
 	origDiff := ghDiff
-	fetchIssuesAndPRs = func() tea.Cmd {
+	fetchIssuesAndPRs = func(*githubConn) tea.Cmd {
 		return func() tea.Msg { return seedData() }
 	}
 	ghDiff = func(int) (string, error) { return "+added line\n-removed line\n", nil }

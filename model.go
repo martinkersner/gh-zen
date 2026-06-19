@@ -85,6 +85,11 @@ type model struct {
 	// Cache: "pr_7" -> diff text (PRs only)
 	diffCache map[string]string
 
+	// conn memoizes the GraphQL client + resolved repo so the fetch layer
+	// resolves them once per session instead of on every round-trip (see
+	// githubConn). A pointer so value-copies of the model across Update share it.
+	conn *githubConn
+
 	// showHelp toggles the keyboard-shortcuts overlay. When set, View renders
 	// the help overlay (see renderHelp) over the current view; `?` or esc closes
 	// it. It reflects the shortcuts of whichever view (list/detail) is active.
@@ -135,6 +140,7 @@ func newModel() model {
 		tabs:      []string{"Issues", "PRs"},
 		activeTab: tabIssues,
 		loading:   true,
+		conn:      &githubConn{},
 		bodyCache: make(map[string]bodyEntry),
 		diffCache: make(map[string]string),
 		issueList: list.New([]list.Item{}, newItemDelegate(), 0, 0),
@@ -212,7 +218,7 @@ func (m *model) refreshCurrentView(background bool) tea.Cmd {
 	if !background {
 		m.loading = true
 	}
-	return fetchIssuesAndPRs()
+	return fetchIssuesAndPRs(m.conn)
 }
 
 // openCloseDialog opens the close-issue confirmation dialog over the given item,
@@ -283,7 +289,7 @@ func restoreIndex(l *list.Model, idx int) {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(fetchIssuesAndPRs(), tickCmd())
+	return tea.Batch(fetchIssuesAndPRs(m.conn), tickCmd())
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -924,8 +930,13 @@ func (m model) cmdPrefetchLabels() tea.Cmd {
 	if len(targets) == 0 {
 		return nil
 	}
+	conn := m.conn
 	return func() tea.Msg {
-		labels, err := fetchLabels(targets)
+		client, repo, err := conn.resolve()
+		if err != nil {
+			return labelsMsg{err: err}
+		}
+		labels, err := fetchLabels(client, repo, targets)
 		return labelsMsg{labels: labels, err: err}
 	}
 }
@@ -937,8 +948,13 @@ func (m model) cmdFetchBody(it *item) tea.Cmd {
 	key := cacheKey(it)
 	number := it.number
 	isPR := it.type_ == "pr"
+	conn := m.conn
 	return func() tea.Msg {
-		body, comments, total, labels, author, err := fetchBody(number, isPR)
+		client, repo, err := conn.resolve()
+		if err != nil {
+			return bodyMsg{key: key, err: err}
+		}
+		body, comments, total, labels, author, err := fetchBody(client, repo, number, isPR)
 		if err != nil {
 			return bodyMsg{key: key, err: err}
 		}

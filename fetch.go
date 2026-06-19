@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -48,6 +49,41 @@ var (
 		return repoInfo{Owner: repo.Owner, Name: repo.Name}, nil
 	}
 )
+
+// githubConn memoizes the per-session GraphQL client and resolved repo so the
+// fetch layer resolves them once instead of on every body/label/list round-trip
+// (repository.Current shells out to git; client construction reads gh config).
+// One conn is created per model (newModel) and shared by value-copies of the
+// model via its pointer, so a single resolution is reused across every fetch and
+// auto-refresh tick. Resolution is cached only on success and retried on failure
+// (a transient auth/repo error doesn't poison the session), and resolve() is
+// safe to call from the concurrent fetch goroutines.
+type githubConn struct {
+	mu     sync.Mutex
+	client graphQLClient
+	repo   repoInfo
+}
+
+// resolve returns the memoized client+repo, resolving them via the
+// newGraphQLClient/currentRepo seams on first success. A failure is returned
+// without being cached so a later call retries.
+func (c *githubConn) resolve() (graphQLClient, repoInfo, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.client != nil {
+		return c.client, c.repo, nil
+	}
+	client, err := newGraphQLClient()
+	if err != nil {
+		return nil, repoInfo{}, err
+	}
+	repo, err := currentRepo()
+	if err != nil {
+		return nil, repoInfo{}, err
+	}
+	c.client, c.repo = client, repo
+	return c.client, c.repo, nil
+}
 
 type dataMsg struct {
 	issues []list.Item
@@ -136,16 +172,7 @@ const labelsFetchLimit = 10
 // labels carry their GitHub hex color for rendering as chips in the detail view.
 // The returned author is the issue/PR opener's login ("" if GitHub returns a
 // null author, e.g. a deleted account), rendered in the detail header.
-func fetchBody(number int, isPR bool) (string, []comment, int, []label, string, error) {
-	client, err := newGraphQLClient()
-	if err != nil {
-		return "", nil, 0, nil, "", err
-	}
-	repo, err := currentRepo()
-	if err != nil {
-		return "", nil, 0, nil, "", err
-	}
-
+func fetchBody(client graphQLClient, repo repoInfo, number int, isPR bool) (string, []comment, int, []label, string, error) {
 	field := "issue"
 	if isPR {
 		field = "pullRequest"
@@ -240,17 +267,9 @@ func fetchBody(number int, isPR bool) (string, []comment, int, []label, string, 
 // the caller can merge it straight into bodyCache. Targets with no labels are
 // simply absent from the map. An empty targets slice is a no-op (nil map, nil
 // error) so the caller needn't special-case an empty visible window.
-func fetchLabels(targets []labelTarget) (map[string][]label, error) {
+func fetchLabels(client graphQLClient, repo repoInfo, targets []labelTarget) (map[string][]label, error) {
 	if len(targets) == 0 {
 		return nil, nil
-	}
-	client, err := newGraphQLClient()
-	if err != nil {
-		return nil, err
-	}
-	repo, err := currentRepo()
-	if err != nil {
-		return nil, err
 	}
 
 	// Build one aliased selection per target: nN: issue|pullRequest(number: N).
@@ -387,15 +406,12 @@ func colorizeDiff(diff string) string {
 
 // fetchIssuesAndPRs returns the cmd that loads the issue/PR lists from GitHub.
 // It is a package var (like ghDiff) so tests can swap in a hermetic data source
-// and drive the program offline without hitting the network.
-var fetchIssuesAndPRs = func() tea.Cmd {
+// and drive the program offline without hitting the network. The conn supplies
+// the memoized client+repo (resolved inside the returned cmd's goroutine, off
+// the UI thread, so a refresh tick reuses the first resolution).
+var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 	return func() tea.Msg {
-		client, err := newGraphQLClient()
-		if err != nil {
-			return errMsg{err}
-		}
-
-		repo, err := currentRepo()
+		client, repo, err := conn.resolve()
 		if err != nil {
 			return errMsg{err}
 		}
