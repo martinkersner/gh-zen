@@ -730,18 +730,19 @@ func TestDetailHeaderAuthorAndLabelsSameRow(t *testing.T) {
 	if ai < 0 || bi < 0 || ai >= bi {
 		t.Errorf("expected @octocat left of the bug chip on the row: %q", row)
 	}
-	// Right-aligned: the chip ends flush at the right edge (the row, including the
-	// PaddingLeft(1), spans the full terminal width).
+	// Right-aligned: the row spans the full terminal width (PaddingLeft(1) plus the
+	// JoinVertical pad), with the chip a column shy of the edge (a reserved gutter).
 	if got := lipgloss.Width(row); got != w {
 		t.Errorf("metadata row width %d, want full terminal width %d:\n%q", got, w, row)
 	}
 	if strings.HasSuffix(strings.TrimRight(row, " "), "bug") == false {
-		t.Errorf("chip not flush to the right edge: %q", strings.TrimRight(row, " "))
+		t.Errorf("chip not right-aligned: %q", strings.TrimRight(row, " "))
 	}
 }
 
 // renderMetaRow with labels but no author right-aligns the chips within the
-// budget (degrading gracefully when the author segment is absent).
+// budget (degrading gracefully when the author segment is absent), reserving a
+// one-column gutter on the right so the chip never paints the final column.
 func TestRenderMetaRowLabelsOnlyRightAligned(t *testing.T) {
 	const width = 40
 	row := renderMetaRow("", []label{{name: "bug", color: "d73a4a"}}, width)
@@ -749,9 +750,11 @@ func TestRenderMetaRowLabelsOnlyRightAligned(t *testing.T) {
 	if !strings.Contains(plain, "bug") {
 		t.Fatalf("labels-only meta row missing chip: %q", plain)
 	}
-	if lipgloss.Width(row) != width {
-		t.Errorf("labels-only row width %d, want %d (right-aligned to budget): %q",
-			lipgloss.Width(row), width, plain)
+	// The chip is right-aligned to width-1, leaving a one-column gutter so its
+	// trailing background padding doesn't bleed against the terminal's edge.
+	if lipgloss.Width(row) != width-1 {
+		t.Errorf("labels-only row width %d, want %d (right-aligned with a 1-col gutter): %q",
+			lipgloss.Width(row), width-1, plain)
 	}
 	if !strings.HasPrefix(plain, " ") {
 		t.Errorf("expected leading padding before the right-aligned chip: %q", plain)
