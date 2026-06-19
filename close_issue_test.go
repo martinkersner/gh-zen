@@ -150,6 +150,7 @@ func TestCloseDialogEscDismisses(t *testing.T) {
 
 // A successful close marks the issue closed so its list row reflects the state.
 func TestCloseIssueReflectsState(t *testing.T) {
+	withStubClose(t, nil) // never shell out to a real `gh issue close`
 	tm := listModel(t)
 
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
@@ -207,7 +208,8 @@ func TestCloseDialogNotOpenedForPR(t *testing.T) {
 func TestCloseDialogNotOpenedWhileFiltering(t *testing.T) {
 	tm := listModel(t)
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
-	if !tm.(model).currentList().SettingFilter() {
+	mm := tm.(model)
+	if !mm.currentList().SettingFilter() {
 		t.Fatal("setup: not in filter mode")
 	}
 	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
