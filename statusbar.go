@@ -98,5 +98,19 @@ func (m model) renderStatusBar() string {
 		bar := lipgloss.JoinHorizontal(lipgloss.Left, left, " ", hints)
 		return ansi.Truncate(bar, m.width, "…")
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Left, left, lipgloss.NewStyle().Width(gap).Render(""), hints)
+
+	// Fill the gap between the left text and the right-side hints. While the
+	// auto-refresh poll is backed off on a low GraphQL budget, center the notice
+	// in that gap so it reads as the middle of the bar; if it can't fit, fall back
+	// to an empty spacer so the bar never wraps past its single reserved line. The
+	// notice uses the diff-delete (red) color so it reads as an alert against the
+	// otherwise-muted bar.
+	middle := lipgloss.NewStyle().Width(gap).Render("")
+	if notice := m.rateLimitNotice(); notice != "" {
+		styled := lipgloss.NewStyle().Foreground(diffDelColor).Render(notice)
+		if lipgloss.Width(styled) <= gap {
+			middle = lipgloss.PlaceHorizontal(gap, lipgloss.Center, styled)
+		}
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Left, left, middle, hints)
 }

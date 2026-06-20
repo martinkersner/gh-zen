@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -62,6 +63,51 @@ type githubConn struct {
 	mu     sync.Mutex
 	client graphQLClient
 	repo   repoInfo
+	// rl is the most recent GraphQL rate-limit reading pulled from a successful
+	// list-level query (see setRateLimit). It is read on the UI goroutine to gate
+	// the auto-refresh poll and render the status-bar notice; the mutex guards it
+	// against the concurrent fetch goroutines that write it.
+	rl rateLimitSnapshot
+}
+
+// rateLimitNode decodes the `rateLimit { remaining resetAt }` selection appended
+// (as a sibling of `repository`) to the list-level polling queries. The
+// `rateLimit` field is itself free — it costs 0 GraphQL points — so reading it
+// every round-trip adds no API cost. resetAt is GitHub's RFC3339 window-reset
+// timestamp, which encoding/json parses straight into a time.Time.
+type rateLimitNode struct {
+	Remaining int       `json:"remaining"`
+	ResetAt   time.Time `json:"resetAt"`
+}
+
+// rateLimitSnapshot is the latest rate-limit reading the fetch layer has seen.
+// valid stays false until a real reading lands, so the backoff gate is inert
+// until then — test fakes that omit the rateLimit field (zero resetAt) never
+// flip it on (see setRateLimit).
+type rateLimitSnapshot struct {
+	remaining int
+	resetAt   time.Time
+	valid     bool
+}
+
+// setRateLimit records a reading from a successful query. A zero resetAt means
+// the field was absent (or a fake omitted it); such readings are dropped so the
+// backoff gate never trips on synthetic/empty data.
+func (c *githubConn) setRateLimit(n rateLimitNode) {
+	if n.ResetAt.IsZero() {
+		return
+	}
+	c.mu.Lock()
+	c.rl = rateLimitSnapshot{remaining: n.Remaining, resetAt: n.ResetAt, valid: true}
+	c.mu.Unlock()
+}
+
+// rateLimitState returns the latest snapshot. Safe to call from the UI goroutine
+// while fetch goroutines write via setRateLimit.
+func (c *githubConn) rateLimitState() rateLimitSnapshot {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.rl
 }
 
 // resolve returns the memoized client+repo, resolving them via the
@@ -493,6 +539,7 @@ var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 
 		query := `
 			query($owner: String!, $repo: String!, $first: Int!) {
+				rateLimit { remaining resetAt }
 				repository(owner: $owner, name: $repo) {
 					issues(first: $first, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
 						totalCount
@@ -524,6 +571,7 @@ var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 		}
 
 		type response struct {
+			RateLimit  rateLimitNode `json:"rateLimit"`
 			Repository struct {
 				Issues struct {
 					TotalCount int        `json:"totalCount"`
@@ -542,6 +590,7 @@ var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 		if err := client.Do(query, variables, &resp); err != nil {
 			return errMsg{err}
 		}
+		conn.setRateLimit(resp.RateLimit)
 
 		return dataMsg{
 			issues:           listItemsFromNodes(resp.Repository.Issues.Nodes, "issue"),
@@ -575,6 +624,7 @@ var fetchMoreItems = func(conn *githubConn, t tab, after string) tea.Cmd {
 		}
 		query := `
 			query($owner: String!, $repo: String!, $first: Int!, $after: String!) {
+				rateLimit { remaining resetAt }
 				repository(owner: $owner, name: $repo) {
 					` + field + `(first: $first, after: $after, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
 						pageInfo { endCursor hasNextPage }
@@ -602,6 +652,7 @@ var fetchMoreItems = func(conn *githubConn, t tab, after string) tea.Cmd {
 		// The connection field name varies, so decode the repository object into a
 		// map of the two possible keys and pick the populated one.
 		type response struct {
+			RateLimit  rateLimitNode `json:"rateLimit"`
 			Repository struct {
 				Issues       conn_ `json:"issues"`
 				PullRequests conn_ `json:"pullRequests"`
@@ -612,6 +663,7 @@ var fetchMoreItems = func(conn *githubConn, t tab, after string) tea.Cmd {
 		if err := client.Do(query, variables, &resp); err != nil {
 			return moreDataMsg{tab: t, err: err}
 		}
+		conn.setRateLimit(resp.RateLimit)
 
 		c := resp.Repository.Issues
 		if t == tabPRs {
@@ -652,7 +704,9 @@ var fetchVisibleItems = func(conn *githubConn, t tab, numbers []int) tea.Cmd {
 		for i, n := range numbers {
 			fmt.Fprintf(&b, "\t\tn%d: %s(number: %d) { number title state }\n", i, field, n)
 		}
-		b.WriteString("\t}\n}")
+		b.WriteString("\t}\n")
+		b.WriteString("\trateLimit { remaining resetAt }\n")
+		b.WriteString("}")
 		variables := map[string]interface{}{
 			"owner": repo.Owner,
 			"repo":  repo.Name,
@@ -666,11 +720,13 @@ var fetchVisibleItems = func(conn *githubConn, t tab, numbers []int) tea.Cmd {
 		// The aliased fields share one shape; decode the repository object into an
 		// alias->node map. A null entry (deleted item) is skipped.
 		var resp struct {
+			RateLimit  rateLimitNode       `json:"rateLimit"`
 			Repository map[string]*aliased `json:"repository"`
 		}
 		if err := client.Do(b.String(), variables, &resp); err != nil {
 			return visibleRefreshMsg{tab: t, err: err}
 		}
+		conn.setRateLimit(resp.RateLimit)
 
 		items := make(map[int]refreshedItem, len(resp.Repository))
 		for _, n := range resp.Repository {
