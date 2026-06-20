@@ -907,13 +907,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// pages survive, at the cost of not surfacing brand-new items until a
 		// manual `r` reloads from the top. The detail-view body refresh is
 		// unaffected. The ticker keeps running regardless.
-		if m.detailOpen {
-			cmds = append(cmds, m.refreshCurrentView(true))
-		} else if !m.currentList().SettingFilter() {
-			if m.paginated() {
-				cmds = append(cmds, m.cmdRefreshVisible())
-			} else {
+		// When the GraphQL budget is nearly spent (see rateLimitedNow) skip the
+		// fetch entirely until the window resets: the ticker keeps firing at zero
+		// API cost and refreshing resumes automatically once the budget recovers.
+		// The status bar surfaces a notice meanwhile (renderStatusBar).
+		if _, backoff := m.rateLimitedNow(); !backoff {
+			if m.detailOpen {
 				cmds = append(cmds, m.refreshCurrentView(true))
+			} else if !m.currentList().SettingFilter() {
+				if m.paginated() {
+					cmds = append(cmds, m.cmdRefreshVisible())
+				} else {
+					cmds = append(cmds, m.refreshCurrentView(true))
+				}
 			}
 		}
 		cmds = append(cmds, tickCmd())
