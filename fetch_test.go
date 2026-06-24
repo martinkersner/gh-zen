@@ -415,6 +415,138 @@ func TestFetchIssuesAndPRsQueryError(t *testing.T) {
 	}
 }
 
+// --- fetchMineItems (involves:@me search scope) ---
+
+// The unified search connection returns issues and PRs in one node list, split
+// by __typename into the two tabs; the merged issueCount feeds both tab totals.
+func TestFetchMineItemsSuccess(t *testing.T) {
+	fake := &fakeGraphQLClient{
+		respJSON: `{"search":{
+			"issueCount":5,
+			"pageInfo":{"endCursor":"MC","hasNextPage":true},
+			"nodes":[
+				{"__typename":"Issue","number":11,"title":"my issue","body":"ib","author":{"login":"me"}},
+				{"__typename":"PullRequest","number":21,"title":"my pr","body":"pb","author":{"login":"me"}}
+			]
+		}}`,
+	}
+	withFakeGitHub(t, fake, nil, testRepo(), nil)
+
+	msg := fetchMineItems(&githubConn{})()
+	data, ok := msg.(dataMsg)
+	if !ok {
+		t.Fatalf("expected dataMsg, got %T (%v)", msg, msg)
+	}
+	if len(data.issues) != 1 || len(data.prs) != 1 {
+		t.Fatalf("got %d issues, %d prs; want 1 each", len(data.issues), len(data.prs))
+	}
+	gotIssue := data.issues[0].(item)
+	if gotIssue.number != 11 || gotIssue.title != "my issue" || gotIssue.type_ != "issue" || gotIssue.author != "me" {
+		t.Errorf("issue item = %+v", gotIssue)
+	}
+	gotPR := data.prs[0].(item)
+	if gotPR.number != 21 || gotPR.title != "my pr" || gotPR.type_ != "pr" {
+		t.Errorf("pr item = %+v", gotPR)
+	}
+	// The scoped search count feeds both tab totals (one merged count).
+	if data.issueTotal != 5 || data.prTotal != 5 {
+		t.Errorf("totals = issues %d, prs %d; want 5, 5", data.issueTotal, data.prTotal)
+	}
+	// Both tabs share the search connection's single cursor/hasNext.
+	if data.issueEndCursor != "MC" || data.prEndCursor != "MC" || !data.issueHasNextPage || !data.prHasNextPage {
+		t.Errorf("pagination = %+v; want shared cursor MC, hasNext true", data)
+	}
+	// The query must use the search connection scoped to involves:@me + repo.
+	q := fake.lastQuery()
+	if !strings.Contains(q, "search(type: ISSUE") {
+		t.Errorf("query missing search(type: ISSUE): %q", q)
+	}
+	if got := fake.lastVars()["search"]; got != "repo:octo/hello is:open involves:@me" {
+		t.Errorf("search var = %v, want involves:@me query", got)
+	}
+}
+
+func TestFetchMineItemsClientError(t *testing.T) {
+	wantErr := errors.New("no auth token")
+	withFakeGitHub(t, nil, wantErr, testRepo(), nil)
+
+	msg := fetchMineItems(&githubConn{})()
+	em, ok := msg.(errMsg)
+	if !ok {
+		t.Fatalf("expected errMsg, got %T", msg)
+	}
+	if !errors.Is(em.err, wantErr) {
+		t.Errorf("err = %v, want %v", em.err, wantErr)
+	}
+}
+
+func TestFetchMineItemsQueryError(t *testing.T) {
+	wantErr := errors.New("graphql: server error")
+	withFakeGitHub(t, &fakeGraphQLClient{err: wantErr}, nil, testRepo(), nil)
+
+	msg := fetchMineItems(&githubConn{})()
+	em, ok := msg.(errMsg)
+	if !ok {
+		t.Fatalf("expected errMsg, got %T", msg)
+	}
+	if !errors.Is(em.err, wantErr) {
+		t.Errorf("err = %v, want %v", em.err, wantErr)
+	}
+}
+
+// A mine "load more" page mixes issues and PRs from one search connection; the
+// message carries both lists plus the shared cursor and the mine flag.
+func TestFetchMoreMineItems(t *testing.T) {
+	fake := &fakeGraphQLClient{
+		respJSON: `{"search":{
+			"pageInfo":{"endCursor":"MC2","hasNextPage":false},
+			"nodes":[
+				{"__typename":"Issue","number":99,"title":"page two issue","body":"b","author":{"login":"me"}},
+				{"__typename":"PullRequest","number":88,"title":"page two pr","body":"b","author":{"login":"me"}}
+			]
+		}}`,
+	}
+	withFakeGitHub(t, fake, nil, testRepo(), nil)
+
+	msg := fetchMoreMineItems(&githubConn{}, tabPRs, "MC")()
+	more, ok := msg.(moreDataMsg)
+	if !ok {
+		t.Fatalf("expected moreDataMsg, got %T (%v)", msg, msg)
+	}
+	if !more.mine {
+		t.Errorf("moreDataMsg.mine = false, want true")
+	}
+	if more.tab != tabPRs || more.endCursor != "MC2" || more.hasNextPage {
+		t.Errorf("moreDataMsg = %+v", more)
+	}
+	if len(more.items) != 1 || len(more.prItems) != 1 {
+		t.Fatalf("got %d issues, %d prs; want 1 each", len(more.items), len(more.prItems))
+	}
+	if got := more.items[0].(item); got.number != 99 || got.type_ != "issue" {
+		t.Errorf("issue item = %+v", got)
+	}
+	if got := more.prItems[0].(item); got.number != 88 || got.type_ != "pr" {
+		t.Errorf("pr item = %+v", got)
+	}
+	if after := fake.lastVars()["after"]; after != "MC" {
+		t.Errorf("after var = %v, want MC", after)
+	}
+}
+
+func TestFetchMoreMineItemsError(t *testing.T) {
+	wantErr := errors.New("rate limited")
+	withFakeGitHub(t, &fakeGraphQLClient{err: wantErr}, nil, testRepo(), nil)
+
+	msg := fetchMoreMineItems(&githubConn{}, tabIssues, "MC")()
+	more, ok := msg.(moreDataMsg)
+	if !ok {
+		t.Fatalf("expected moreDataMsg, got %T", msg)
+	}
+	if more.tab != tabIssues || !errors.Is(more.err, wantErr) {
+		t.Errorf("moreDataMsg = %+v, want tab=issues err=%v", more, wantErr)
+	}
+}
+
 // --- fetchLabels (batched visible-window prefetch) ---
 
 // A mixed issue+PR batch builds one aliased query and maps each alias's labels

@@ -36,6 +36,11 @@ const loadingIndicator = "loading…"
 // sub-view is no longer blanked while loading; activity is surfaced only here.
 const loadingDiffIndicator = "loading diff…"
 
+// mineScopeLabel is the status-bar text shown while the "mine only"
+// (involves:@me) scope is active (toggled with `m`). Kept here as a named
+// constant per project convention rather than inline in statusbar.go.
+const mineScopeLabel = "mine"
+
 // closeReasonCompleted and closeReasonNotPlanned are the GitHub state reasons
 // passed to `gh issue close --reason` when closing an issue from the close dialog
 // (the `c` key). They map to GitHub's CLOSED state reasons: "completed" and

@@ -155,8 +155,14 @@ type dataMsg struct {
 // the cursor nears the end of the loaded items. Unlike dataMsg (which replaces
 // the list), its items are appended to what's already loaded.
 type moreDataMsg struct {
-	tab         tab
-	items       []list.Item
+	tab   tab
+	items []list.Item
+	// prItems carries the PR rows from a "mine only" search page (mine == true);
+	// the unified search connection mixes issues and PRs in one page, so a single
+	// load-more advances both tabs. In the repo-connection path mine is false,
+	// prItems is nil, and items holds the single tab's rows.
+	prItems     []list.Item
+	mine        bool
 	endCursor   string
 	hasNextPage bool
 	err         error
@@ -674,6 +680,192 @@ var fetchMoreItems = func(conn *githubConn, t tab, after string) tea.Cmd {
 			items:       listItemsFromNodes(c.Nodes, type_),
 			endCursor:   c.PageInfo.EndCursor,
 			hasNextPage: c.PageInfo.HasNextPage,
+		}
+	}
+}
+
+// searchListNode is one node from the unified `search(type: ISSUE)` connection
+// used by the "mine only" scope. The connection returns both Issues and
+// PullRequests, distinguished by __typename, so nodes are split into the two
+// tabs by that field (see searchItemsByType).
+type searchListNode struct {
+	Typename string `json:"__typename"`
+	Number   int    `json:"number"`
+	Title    string `json:"title"`
+	Body     string `json:"body"`
+	Author   struct {
+		Login string `json:"login"`
+	} `json:"author"`
+}
+
+// mineSearchQuery builds the GitHub search query string for the "mine only"
+// scope: open issues+PRs in the repo that involve the current user
+// (involves:@me covers authored, assigned, mentioned, or commented-on). The
+// repo is qualified so the search is scoped to the active repository.
+func mineSearchQuery(repo repoInfo) string {
+	return fmt.Sprintf("repo:%s/%s is:open involves:@me", repo.Owner, repo.Name)
+}
+
+// searchItemsByType splits a unified search connection's nodes into the issue
+// and PR lists by __typename, mirroring listItemsFromNodes' item shape so the
+// model/list code is unchanged from the repo-connection path.
+func searchItemsByType(nodes []searchListNode) (issues, prs []list.Item) {
+	for _, n := range nodes {
+		it := item{number: n.Number, title: n.Title, body: n.Body, author: n.Author.Login}
+		switch n.Typename {
+		case "PullRequest":
+			it.type_ = "pr"
+			prs = append(prs, it)
+		case "Issue":
+			it.type_ = "issue"
+			issues = append(issues, it)
+		}
+	}
+	return issues, prs
+}
+
+// fetchMineItems returns the cmd that loads the first page of the "mine only"
+// scope: a single `search(type: ISSUE, query: "...involves:@me")` connection
+// whose nodes are split by __typename into the issues/PRs tabs. It returns the
+// same dataMsg shape as fetchIssuesAndPRs, so the model/list code is identical
+// across the two scopes. The search connection carries a single issueCount and
+// one pageInfo for the merged result; both tabs therefore share that total and
+// pagination cursor (advanced together in the mine path). It is a package var
+// (like fetchIssuesAndPRs) so tests can swap in a hermetic data source.
+var fetchMineItems = func(conn *githubConn) tea.Cmd {
+	return func() tea.Msg {
+		client, repo, err := conn.resolve()
+		if err != nil {
+			return errMsg{err}
+		}
+
+		query := `
+			query($search: String!, $first: Int!) {
+				rateLimit { remaining resetAt }
+				search(type: ISSUE, query: $search, first: $first) {
+					issueCount
+					pageInfo { endCursor hasNextPage }
+					nodes {
+						__typename
+						... on Issue {
+							number
+							title
+							body
+							author { login }
+						}
+						... on PullRequest {
+							number
+							title
+							body
+							author { login }
+						}
+					}
+				}
+			}
+		`
+		variables := map[string]interface{}{
+			"search": mineSearchQuery(repo),
+			"first":  listPageSize,
+		}
+
+		type response struct {
+			RateLimit rateLimitNode `json:"rateLimit"`
+			Search    struct {
+				IssueCount int              `json:"issueCount"`
+				PageInfo   pageInfo         `json:"pageInfo"`
+				Nodes      []searchListNode `json:"nodes"`
+			} `json:"search"`
+		}
+
+		var resp response
+		if err := client.Do(query, variables, &resp); err != nil {
+			return errMsg{err}
+		}
+		conn.setRateLimit(resp.RateLimit)
+
+		issues, prs := searchItemsByType(resp.Search.Nodes)
+		// The search connection reports one merged issueCount (issues+PRs) and one
+		// shared pageInfo. Use the scoped total for both tab brackets and arm the
+		// shared cursor on both tabs so a "load more" on either advances the merged
+		// page (see fetchMoreMineItems).
+		return dataMsg{
+			issues:           issues,
+			prs:              prs,
+			issueTotal:       resp.Search.IssueCount,
+			prTotal:          resp.Search.IssueCount,
+			issueEndCursor:   resp.Search.PageInfo.EndCursor,
+			issueHasNextPage: resp.Search.PageInfo.HasNextPage,
+			prEndCursor:      resp.Search.PageInfo.EndCursor,
+			prHasNextPage:    resp.Search.PageInfo.HasNextPage,
+		}
+	}
+}
+
+// fetchMoreMineItems returns the cmd that loads the next page of the "mine only"
+// search, starting after the given cursor. The unified search connection mixes
+// issues and PRs in one page, so the returned moreDataMsg may carry rows for the
+// other tab too; the handler splits and appends both. It is a package var so
+// tests can stub it. The tab argument records which tab's scroll triggered the
+// load (carried back on the message for the in-flight guard); the appended items
+// are split by __typename regardless.
+var fetchMoreMineItems = func(conn *githubConn, t tab, after string) tea.Cmd {
+	return func() tea.Msg {
+		client, repo, err := conn.resolve()
+		if err != nil {
+			return moreDataMsg{tab: t, err: err}
+		}
+
+		query := `
+			query($search: String!, $first: Int!, $after: String!) {
+				rateLimit { remaining resetAt }
+				search(type: ISSUE, query: $search, first: $first, after: $after) {
+					pageInfo { endCursor hasNextPage }
+					nodes {
+						__typename
+						... on Issue {
+							number
+							title
+							body
+							author { login }
+						}
+						... on PullRequest {
+							number
+							title
+							body
+							author { login }
+						}
+					}
+				}
+			}
+		`
+		variables := map[string]interface{}{
+			"search": mineSearchQuery(repo),
+			"first":  listPageSize,
+			"after":  after,
+		}
+
+		type response struct {
+			RateLimit rateLimitNode `json:"rateLimit"`
+			Search    struct {
+				PageInfo pageInfo         `json:"pageInfo"`
+				Nodes    []searchListNode `json:"nodes"`
+			} `json:"search"`
+		}
+
+		var resp response
+		if err := client.Do(query, variables, &resp); err != nil {
+			return moreDataMsg{tab: t, err: err}
+		}
+		conn.setRateLimit(resp.RateLimit)
+
+		issues, prs := searchItemsByType(resp.Search.Nodes)
+		return moreDataMsg{
+			tab:         t,
+			items:       issues,
+			prItems:     prs,
+			mine:        true,
+			endCursor:   resp.Search.PageInfo.EndCursor,
+			hasNextPage: resp.Search.PageInfo.HasNextPage,
 		}
 	}
 }
