@@ -139,21 +139,22 @@ func TestMineTickRefreshesViaMineFetch(t *testing.T) {
 	}
 }
 
-// Lazy pagination routes through fetchMoreMineItems while mineOnly is on, and the
-// resulting mixed page is split across both tabs.
+// Lazy pagination routes through fetchMoreMineItems for the active tab while
+// mineOnly is on, and the page appends to that one tab using its own cursor.
 func TestMinePaginationRoutesAndSplits(t *testing.T) {
+	var gotTab tab
 	var gotAfter string
 	calls := 0
 	orig := fetchMoreMineItems
 	fetchMoreMineItems = func(_ *githubConn, tb tab, after string) tea.Cmd {
 		calls++
+		gotTab = tb
 		gotAfter = after
 		return func() tea.Msg {
 			return moreDataMsg{
-				tab: tb, mine: true,
+				tab:       tb,
 				items:     mkItems(2, "issue"),
-				prItems:   mkItems(3, "pr"),
-				endCursor: "MC2", hasNextPage: false,
+				endCursor: "IC2", hasNextPage: false,
 			}
 		}
 	}
@@ -163,42 +164,49 @@ func TestMinePaginationRoutesAndSplits(t *testing.T) {
 	m.mineOnly = true
 	var tm tea.Model = m
 	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	// Each tab carries its own cursor/hasNext (independent type-scoped searches).
 	tm, _ = tm.Update(dataMsg{
 		issues:         mkItems(50, "issue"),
 		prs:            mkItems(5, "pr"),
-		issueEndCursor: "MC", issueHasNextPage: true,
-		prEndCursor: "MC", prHasNextPage: true,
+		issueEndCursor: "IC", issueHasNextPage: true,
+		prEndCursor: "PC", prHasNextPage: false,
 	})
 
-	// Jump to the last issue, within the pagination threshold of the end.
+	// Jump to the last issue, within the pagination threshold of the end: the
+	// issues tab's load-more fires with the issues cursor.
 	tm, _ = pressKey(tm, "G")
 	if calls != 1 {
 		t.Fatalf("fetchMoreMineItems called %d times, want 1", calls)
 	}
-	if gotAfter != "MC" {
-		t.Errorf("after = %q, want MC", gotAfter)
+	if gotTab != tabIssues {
+		t.Errorf("tab = %v, want tabIssues", gotTab)
+	}
+	if gotAfter != "IC" {
+		t.Errorf("after = %q, want IC", gotAfter)
 	}
 
-	// Deliver the mixed page: issues append (50->52) and PRs append (5->8); both
-	// tabs' cursor/pages advance together.
+	// Deliver the issues page: issues append (50->52), PRs untouched (still 5);
+	// only the issues cursor/pages advance.
 	tm, _ = tm.Update(moreDataMsg{
-		tab: tabIssues, mine: true,
+		tab:       tabIssues,
 		items:     mkItems(2, "issue"),
-		prItems:   mkItems(3, "pr"),
-		endCursor: "MC2", hasNextPage: false,
+		endCursor: "IC2", hasNextPage: false,
 	})
 	mm := tm.(model)
 	if got := len(mm.issueList.Items()); got != 52 {
 		t.Errorf("issues = %d, want 52", got)
 	}
-	if got := len(mm.prList.Items()); got != 8 {
-		t.Errorf("prs = %d, want 8", got)
+	if got := len(mm.prList.Items()); got != 5 {
+		t.Errorf("prs = %d, want 5 (untouched)", got)
 	}
-	if mm.issuePages != 2 || mm.prPages != 2 {
-		t.Errorf("pages = issue %d pr %d, want 2 each", mm.issuePages, mm.prPages)
+	if mm.issuePages != 2 || mm.prPages != 1 {
+		t.Errorf("pages = issue %d pr %d, want issue 2, pr 1", mm.issuePages, mm.prPages)
 	}
-	if mm.issueCursor != "MC2" || mm.prCursor != "MC2" {
-		t.Errorf("cursors = issue %q pr %q, want MC2 each", mm.issueCursor, mm.prCursor)
+	if mm.issueCursor != "IC2" {
+		t.Errorf("issue cursor = %q, want IC2", mm.issueCursor)
+	}
+	if mm.prCursor != "PC" {
+		t.Errorf("pr cursor = %q, want PC (untouched)", mm.prCursor)
 	}
 }
 

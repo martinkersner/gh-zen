@@ -748,31 +748,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case moreDataMsg:
 		// One lazily-loaded page: append it to the existing items (preserving the
 		// cursor) and advance the pagination state. A failed fetch just clears the
-		// in-flight guard so a later scroll retries.
-		//
-		// In the "mine only" scope a single page mixes issues and PRs from one
-		// unified search connection sharing one cursor, so both lists are appended
-		// and both tabs' cursor/page advance together. Off, the page belongs to a
-		// single tab's repo connection.
+		// in-flight guard so a later scroll retries. Both scopes deliver one tab's
+		// page here: the repo connection in the default scope, the tab's own
+		// type-scoped involves:@me search in the "mine only" scope.
 		if msg.tab == tabPRs {
 			m.prLoadingMore = false
 		} else {
 			m.issueLoadingMore = false
 		}
 		if msg.err != nil {
-			break
-		}
-		if msg.mine {
-			iIdx := m.issueList.Index()
-			pIdx := m.prList.Index()
-			m.setListItems(tabIssues, append(m.issueList.Items(), msg.items...))
-			m.setListItems(tabPRs, append(m.prList.Items(), msg.prItems...))
-			restoreIndex(&m.issueList, iIdx)
-			restoreIndex(&m.prList, pIdx)
-			m.issueCursor, m.issueHasNext, m.issuePages = msg.endCursor, msg.hasNextPage, m.issuePages+1
-			m.prCursor, m.prHasNext, m.prPages = msg.endCursor, msg.hasNextPage, m.prPages+1
-			m.updateListSize()
-			cmds = append(cmds, m.cmdPrefetchLabels())
 			break
 		}
 		l := &m.issueList
@@ -1047,9 +1031,9 @@ func (m *model) maybeLoadMore() tea.Cmd {
 	} else {
 		m.issueLoadingMore = true
 	}
-	// In the "mine only" scope the next page comes from the unified search
-	// connection (which mixes issues+PRs); off, from the active tab's repo
-	// connection. Both return a moreDataMsg the handler appends.
+	// In the "mine only" scope the next page comes from the active tab's own
+	// type-scoped involves:@me search; off, from the active tab's repo
+	// connection. Both return a single-tab moreDataMsg the handler appends.
 	if m.mineOnly {
 		return fetchMoreMineItems(m.conn, m.activeTab, cursor)
 	}

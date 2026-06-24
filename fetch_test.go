@@ -417,18 +417,22 @@ func TestFetchIssuesAndPRsQueryError(t *testing.T) {
 
 // --- fetchMineItems (involves:@me search scope) ---
 
-// The unified search connection returns issues and PRs in one node list, split
-// by __typename into the two tabs; the merged issueCount feeds both tab totals.
+// Two type-scoped search connections (is:issue, is:pr) back the two tabs, each
+// with its own count and cursor — no merged total/cursor shared across tabs.
 func TestFetchMineItemsSuccess(t *testing.T) {
 	fake := &fakeGraphQLClient{
-		respJSON: `{"search":{
-			"issueCount":5,
-			"pageInfo":{"endCursor":"MC","hasNextPage":true},
-			"nodes":[
-				{"__typename":"Issue","number":11,"title":"my issue","body":"ib","author":{"login":"me"}},
-				{"__typename":"PullRequest","number":21,"title":"my pr","body":"pb","author":{"login":"me"}}
-			]
-		}}`,
+		respJSON: `{
+			"issues":{
+				"issueCount":5,
+				"pageInfo":{"endCursor":"IC","hasNextPage":true},
+				"nodes":[{"number":11,"title":"my issue","body":"ib","author":{"login":"me"}}]
+			},
+			"prs":{
+				"issueCount":3,
+				"pageInfo":{"endCursor":"PC","hasNextPage":false},
+				"nodes":[{"number":21,"title":"my pr","body":"pb","author":{"login":"me"}}]
+			}
+		}`,
 	}
 	withFakeGitHub(t, fake, nil, testRepo(), nil)
 
@@ -448,21 +452,27 @@ func TestFetchMineItemsSuccess(t *testing.T) {
 	if gotPR.number != 21 || gotPR.title != "my pr" || gotPR.type_ != "pr" {
 		t.Errorf("pr item = %+v", gotPR)
 	}
-	// The scoped search count feeds both tab totals (one merged count).
-	if data.issueTotal != 5 || data.prTotal != 5 {
-		t.Errorf("totals = issues %d, prs %d; want 5, 5", data.issueTotal, data.prTotal)
+	// Each tab carries its own scoped count.
+	if data.issueTotal != 5 || data.prTotal != 3 {
+		t.Errorf("totals = issues %d, prs %d; want 5, 3", data.issueTotal, data.prTotal)
 	}
-	// Both tabs share the search connection's single cursor/hasNext.
-	if data.issueEndCursor != "MC" || data.prEndCursor != "MC" || !data.issueHasNextPage || !data.prHasNextPage {
-		t.Errorf("pagination = %+v; want shared cursor MC, hasNext true", data)
+	// Each tab carries its own cursor/hasNext (issues paginate, PRs don't).
+	if data.issueEndCursor != "IC" || !data.issueHasNextPage {
+		t.Errorf("issue pagination = %q/%v; want IC/true", data.issueEndCursor, data.issueHasNextPage)
 	}
-	// The query must use the search connection scoped to involves:@me + repo.
+	if data.prEndCursor != "PC" || data.prHasNextPage {
+		t.Errorf("pr pagination = %q/%v; want PC/false", data.prEndCursor, data.prHasNextPage)
+	}
+	// The query must run two type-scoped searches involving the current user.
 	q := fake.lastQuery()
-	if !strings.Contains(q, "search(type: ISSUE") {
-		t.Errorf("query missing search(type: ISSUE): %q", q)
+	if !strings.Contains(q, "issues: search(type: ISSUE") || !strings.Contains(q, "prs: search(type: ISSUE") {
+		t.Errorf("query missing aliased type-scoped searches: %q", q)
 	}
-	if got := fake.lastVars()["search"]; got != "repo:octo/hello is:open involves:@me" {
-		t.Errorf("search var = %v, want involves:@me query", got)
+	if got := fake.lastVars()["issueSearch"]; got != "repo:octo/hello is:open is:issue involves:@me" {
+		t.Errorf("issueSearch var = %v, want is:issue involves:@me query", got)
+	}
+	if got := fake.lastVars()["prSearch"]; got != "repo:octo/hello is:open is:pr involves:@me" {
+		t.Errorf("prSearch var = %v, want is:pr involves:@me query", got)
 	}
 }
 
@@ -494,15 +504,14 @@ func TestFetchMineItemsQueryError(t *testing.T) {
 	}
 }
 
-// A mine "load more" page mixes issues and PRs from one search connection; the
-// message carries both lists plus the shared cursor and the mine flag.
+// A mine "load more" page belongs to the single tab that triggered it, fetched
+// from that tab's type-scoped search; the message appends to that one tab.
 func TestFetchMoreMineItems(t *testing.T) {
 	fake := &fakeGraphQLClient{
 		respJSON: `{"search":{
 			"pageInfo":{"endCursor":"MC2","hasNextPage":false},
 			"nodes":[
-				{"__typename":"Issue","number":99,"title":"page two issue","body":"b","author":{"login":"me"}},
-				{"__typename":"PullRequest","number":88,"title":"page two pr","body":"b","author":{"login":"me"}}
+				{"number":88,"title":"page two pr","body":"b","author":{"login":"me"}}
 			]
 		}}`,
 	}
@@ -513,20 +522,18 @@ func TestFetchMoreMineItems(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected moreDataMsg, got %T (%v)", msg, msg)
 	}
-	if !more.mine {
-		t.Errorf("moreDataMsg.mine = false, want true")
-	}
 	if more.tab != tabPRs || more.endCursor != "MC2" || more.hasNextPage {
 		t.Errorf("moreDataMsg = %+v", more)
 	}
-	if len(more.items) != 1 || len(more.prItems) != 1 {
-		t.Fatalf("got %d issues, %d prs; want 1 each", len(more.items), len(more.prItems))
+	if len(more.items) != 1 {
+		t.Fatalf("got %d items; want 1", len(more.items))
 	}
-	if got := more.items[0].(item); got.number != 99 || got.type_ != "issue" {
-		t.Errorf("issue item = %+v", got)
-	}
-	if got := more.prItems[0].(item); got.number != 88 || got.type_ != "pr" {
+	if got := more.items[0].(item); got.number != 88 || got.type_ != "pr" {
 		t.Errorf("pr item = %+v", got)
+	}
+	// The PRs tab load-more must use the is:pr type-scoped search and its cursor.
+	if got := fake.lastVars()["search"]; got != "repo:octo/hello is:open is:pr involves:@me" {
+		t.Errorf("search var = %v, want is:pr involves:@me query", got)
 	}
 	if after := fake.lastVars()["after"]; after != "MC" {
 		t.Errorf("after var = %v, want MC", after)
