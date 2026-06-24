@@ -86,6 +86,7 @@ func (m model) currentShortcuts() []shortcut {
 		s = append(s, shortcut{"c", "close issue"})
 	}
 	s = append(s,
+		shortcut{"m", "toggle mine"},
 		shortcut{"t", "theme"},
 		shortcut{"r", "refresh"},
 		shortcut{"?", "toggle help"},

@@ -30,6 +30,14 @@ type model struct {
 	tabs      []string
 	activeTab tab
 
+	// mineOnly scopes both tabs to items involving the current user
+	// (involves:@me) when set. On: the lists are loaded via a unified search
+	// connection (fetchMineItems); off: via the repo issues/pullRequests
+	// connections (fetchIssuesAndPRs). Toggled with `m` in the list view; the
+	// auto-refresh tick and lazy pagination route through the matching fetch path
+	// based on this flag, and the status bar surfaces the scope while it is on.
+	mineOnly bool
+
 	// One list per tab, persisted so selection & scroll are remembered
 	issueList list.Model
 	prList    list.Model
@@ -242,6 +250,17 @@ func (m *model) refreshCurrentView(background bool) tea.Cmd {
 	}
 	if !background {
 		m.loading = true
+	}
+	return m.fetchListData()
+}
+
+// fetchListData returns the cmd that loads the first page of both tabs through
+// the scope-appropriate path: the unified involves:@me search when mineOnly is
+// set, otherwise the repo issues/pullRequests connections. Both return the same
+// dataMsg shape, so the dataMsg handler is identical across scopes.
+func (m *model) fetchListData() tea.Cmd {
+	if m.mineOnly {
+		return fetchMineItems(m.conn)
 	}
 	return fetchIssuesAndPRs(m.conn)
 }
@@ -586,6 +605,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "q", "ctrl+c", "ctrl+g":
 			return m, tea.Quit
+		case "m":
+			// Toggle the "mine only" (involves:@me) scope across both tabs and
+			// refetch through the matching path. Reset scroll to the top of both
+			// lists since the contents change, but leave any active `/` filter
+			// applied so it carries over onto the new scope. The loading flag
+			// surfaces the in-flight refetch in the status bar.
+			m.mineOnly = !m.mineOnly
+			m.issueList.Select(0)
+			m.prList.Select(0)
+			m.loading = true
+			return m, m.fetchListData()
 		case "r":
 			return m, m.refreshCurrentView(false)
 		case "o":
@@ -716,18 +746,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.cmdPrefetchLabels())
 
 	case moreDataMsg:
-		// One lazily-loaded page for a single tab: append it to the existing
-		// items (preserving the cursor) and advance that tab's pagination state.
-		// A failed fetch just clears the in-flight guard so a later scroll retries.
-		l := &m.issueList
+		// One lazily-loaded page: append it to the existing items (preserving the
+		// cursor) and advance the pagination state. A failed fetch just clears the
+		// in-flight guard so a later scroll retries.
+		//
+		// In the "mine only" scope a single page mixes issues and PRs from one
+		// unified search connection sharing one cursor, so both lists are appended
+		// and both tabs' cursor/page advance together. Off, the page belongs to a
+		// single tab's repo connection.
 		if msg.tab == tabPRs {
-			l = &m.prList
 			m.prLoadingMore = false
 		} else {
 			m.issueLoadingMore = false
 		}
 		if msg.err != nil {
 			break
+		}
+		if msg.mine {
+			iIdx := m.issueList.Index()
+			pIdx := m.prList.Index()
+			m.setListItems(tabIssues, append(m.issueList.Items(), msg.items...))
+			m.setListItems(tabPRs, append(m.prList.Items(), msg.prItems...))
+			restoreIndex(&m.issueList, iIdx)
+			restoreIndex(&m.prList, pIdx)
+			m.issueCursor, m.issueHasNext, m.issuePages = msg.endCursor, msg.hasNextPage, m.issuePages+1
+			m.prCursor, m.prHasNext, m.prPages = msg.endCursor, msg.hasNextPage, m.prPages+1
+			m.updateListSize()
+			cmds = append(cmds, m.cmdPrefetchLabels())
+			break
+		}
+		l := &m.issueList
+		if msg.tab == tabPRs {
+			l = &m.prList
 		}
 		idx := l.Index()
 		m.setListItems(msg.tab, append(l.Items(), msg.items...))
@@ -996,6 +1046,12 @@ func (m *model) maybeLoadMore() tea.Cmd {
 		m.prLoadingMore = true
 	} else {
 		m.issueLoadingMore = true
+	}
+	// In the "mine only" scope the next page comes from the unified search
+	// connection (which mixes issues+PRs); off, from the active tab's repo
+	// connection. Both return a moreDataMsg the handler appends.
+	if m.mineOnly {
+		return fetchMoreMineItems(m.conn, m.activeTab, cursor)
 	}
 	return fetchMoreItems(m.conn, m.activeTab, cursor)
 }

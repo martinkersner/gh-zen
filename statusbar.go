@@ -58,6 +58,16 @@ func (m model) renderStatusBar() string {
 				left = searchBarLeft(q, false)
 			}
 		}
+		// Surface the active "mine only" (involves:@me) scope so the user can see
+		// the lists are filtered to their items. Prefix any active filter query so
+		// both are visible together (e.g. "mine · / bug").
+		if m.mineOnly {
+			if left != "" {
+				left = mineScopeLabel + " · " + left
+			} else {
+				left = mineScopeLabel
+			}
+		}
 	}
 
 	hasLeft := left != ""
