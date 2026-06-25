@@ -37,9 +37,10 @@ const loadingIndicator = "loading…"
 const loadingDiffIndicator = "loading diff…"
 
 // mineScopeLabel is the status-bar text shown while the "mine only"
-// (involves:@me) scope is active (toggled with `m`). Kept here as a named
+// (involves:@me) scope is active (toggled with `m`). It renders centered in the
+// middle of the bar (alongside any rate-limit notice). Kept here as a named
 // constant per project convention rather than inline in statusbar.go.
-const mineScopeLabel = "mine"
+const mineScopeLabel = "@me"
 
 // closeReasonCompleted and closeReasonNotPlanned are the GitHub state reasons
 // passed to `gh issue close --reason` when closing an issue from the close dialog

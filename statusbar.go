@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -12,9 +14,11 @@ import (
 // detail view it shows the item kind. While a user-visible fetch is in flight
 // the left side is prefixed with a dim loading indicator (see loadingIndicator)
 // so activity stays visible even when the body is already populated (manual
-// refresh, lazy diff); background auto-refresh ticks stay silent. The right side
-// shows context-aware key hints. It is rendered in both the list and detail
-// views.
+// refresh, lazy diff); background auto-refresh ticks stay silent. The middle
+// centers the active "mine only" (involves:@me) scope as `@me` and/or the
+// rate-limit backoff notice (shown together as `@me · <notice>` when both are
+// active). The right side shows context-aware key hints. It is rendered in both
+// the list and detail views.
 func (m model) renderStatusBar() string {
 	// Every status-bar element shares one uniform color (the muted dim gray
 	// formerly used only for the `? help` hint) so the bar reads as a single
@@ -58,16 +62,9 @@ func (m model) renderStatusBar() string {
 				left = searchBarLeft(q, false)
 			}
 		}
-		// Surface the active "mine only" (involves:@me) scope so the user can see
-		// the lists are filtered to their items. Prefix any active filter query so
-		// both are visible together (e.g. "mine · / bug").
-		if m.mineOnly {
-			if left != "" {
-				left = mineScopeLabel + " · " + left
-			} else {
-				left = mineScopeLabel
-			}
-		}
+		// The active "mine only" (involves:@me) scope is surfaced as `@me` centered
+		// in the middle of the bar (see the gap fill below), so the left side shows
+		// only the filter query.
 	}
 
 	hasLeft := left != ""
@@ -109,15 +106,26 @@ func (m model) renderStatusBar() string {
 		return ansi.Truncate(bar, m.width, "…")
 	}
 
-	// Fill the gap between the left text and the right-side hints. While the
-	// auto-refresh poll is backed off on a low GraphQL budget, center the notice
-	// in that gap so it reads as the middle of the bar; if it can't fit, fall back
-	// to an empty spacer so the bar never wraps past its single reserved line. The
-	// notice uses the diff-delete (red) color so it reads as an alert against the
-	// otherwise-muted bar.
+	// Fill the gap between the left text and the right-side hints with the
+	// centered middle content. Two things can occupy the middle: the active "mine
+	// only" (involves:@me) scope and, while the auto-refresh poll is backed off on
+	// a low GraphQL budget, the rate-limit notice. When both are active they show
+	// together as `@me · <notice>`; when only one is active that one is centered
+	// alone; when neither is active the middle stays empty. The `@me` scope is
+	// styled in the muted bar color so it reads as a quiet status, while the notice
+	// keeps the diff-delete (red) color so it reads as an alert. The composed
+	// string is only centered if it fits within the gap; otherwise we fall back to
+	// an empty spacer so the bar never wraps past its single reserved line.
 	middle := lipgloss.NewStyle().Width(gap).Render("")
+	var parts []string
+	if m.mineOnly {
+		parts = append(parts, barStyle.Render(mineScopeLabel))
+	}
 	if notice := m.rateLimitNotice(); notice != "" {
-		styled := lipgloss.NewStyle().Foreground(diffDelColor).Render(notice)
+		parts = append(parts, lipgloss.NewStyle().Foreground(diffDelColor).Render(notice))
+	}
+	if len(parts) > 0 {
+		styled := strings.Join(parts, barStyle.Render(" · "))
 		if lipgloss.Width(styled) <= gap {
 			middle = lipgloss.PlaceHorizontal(gap, lipgloss.Center, styled)
 		}
