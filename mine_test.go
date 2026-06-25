@@ -3,8 +3,10 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // stubMineFetch swaps fetchMineItems for the test duration, recording the number
@@ -113,6 +115,26 @@ func TestStatusBarShowsMineScope(t *testing.T) {
 	tm, _ = pressKey(tm, "m")
 	if !strings.Contains(tm.(model).renderStatusBar(), mineScopeLabel) {
 		t.Errorf("status bar missing %q while mineOnly: %q", mineScopeLabel, tm.(model).renderStatusBar())
+	}
+}
+
+// When both the mine scope and the rate-limit backoff notice want the middle,
+// the bar shows them together as `@me · <notice>`.
+func TestStatusBarComposesMineScopeAndRateLimitNotice(t *testing.T) {
+	stubMineFetch(t, dataMsg{issues: mkItems(2, "issue")})
+
+	m := newModel()
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: mkItems(5, "issue")})
+	tm, _ = pressKey(tm, "m")
+
+	mm := tm.(model)
+	mm.conn.setRateLimit(rateLimitNode{Remaining: 1, ResetAt: time.Now().Add(time.Hour)})
+
+	bar := ansi.Strip(mm.renderStatusBar())
+	if !strings.Contains(bar, mineScopeLabel+" · rate limit low") {
+		t.Errorf("composed bar missing %q joining scope+notice: %q", mineScopeLabel+" · rate limit low", bar)
 	}
 }
 
