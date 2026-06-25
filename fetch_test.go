@@ -554,6 +554,120 @@ func TestFetchMoreMineItemsError(t *testing.T) {
 	}
 }
 
+// --- canonical-repo capture (rename-proof mine scope, issue #172) ---
+
+// The list query must select repository.nameWithOwner and capture the
+// rename-resolved identity on the conn so the mine-scope search uses the
+// canonical name even when the local remote carries the repo's old name.
+func TestFetchIssuesAndPRsCapturesCanonicalRepo(t *testing.T) {
+	fake := &fakeGraphQLClient{
+		respJSON: `{"repository":{
+			"nameWithOwner":"Bisonai/datamaxi-backend",
+			"issues":{"totalCount":1,"nodes":[{"number":1,"title":"i","body":"b"}]},
+			"pullRequests":{"totalCount":0,"nodes":[]}
+		}}`,
+	}
+	// Remote carries the pre-rename name.
+	withFakeGitHub(t, fake, nil, repoInfo{Owner: "Bisonai", Name: "datamaxi"}, nil)
+
+	conn := &githubConn{}
+	fetchIssuesAndPRs(conn)()
+
+	if !strings.Contains(fake.lastQuery(), "nameWithOwner") {
+		t.Errorf("list query missing nameWithOwner selection: %q", fake.lastQuery())
+	}
+	got, ok := conn.canonicalRepo()
+	if !ok {
+		t.Fatalf("canonical repo not captured")
+	}
+	if got.Owner != "Bisonai" || got.Name != "datamaxi-backend" {
+		t.Errorf("canonical repo = %+v, want Bisonai/datamaxi-backend", got)
+	}
+}
+
+// setCanonicalRepo parses "owner/name"; blank/malformed values are dropped so the
+// mine path keeps falling back to the remote-derived repo.
+func TestSetCanonicalRepo(t *testing.T) {
+	cases := []struct {
+		in        string
+		wantOwner string
+		wantName  string
+		wantOK    bool
+	}{
+		{"Bisonai/datamaxi-backend", "Bisonai", "datamaxi-backend", true},
+		{"", "", "", false},
+		{"noslash", "", "", false},
+		{"owner/", "", "", false},
+		{"/name", "", "", false},
+	}
+	for _, tc := range cases {
+		conn := &githubConn{}
+		conn.setCanonicalRepo(tc.in)
+		got, ok := conn.canonicalRepo()
+		if ok != tc.wantOK {
+			t.Errorf("setCanonicalRepo(%q) ok = %v, want %v", tc.in, ok, tc.wantOK)
+			continue
+		}
+		if ok && (got.Owner != tc.wantOwner || got.Name != tc.wantName) {
+			t.Errorf("setCanonicalRepo(%q) = %+v, want %s/%s", tc.in, got, tc.wantOwner, tc.wantName)
+		}
+	}
+}
+
+// mineSearchRepo prefers the captured canonical repo and falls back to the
+// remote-derived repo before a list query has resolved one.
+func TestMineSearchRepoFallback(t *testing.T) {
+	remote := repoInfo{Owner: "Bisonai", Name: "datamaxi"}
+	conn := &githubConn{}
+	if got := conn.mineSearchRepo(remote); got != remote {
+		t.Errorf("before capture, mineSearchRepo = %+v, want fallback %+v", got, remote)
+	}
+	conn.setCanonicalRepo("Bisonai/datamaxi-backend")
+	canonical := repoInfo{Owner: "Bisonai", Name: "datamaxi-backend"}
+	if got := conn.mineSearchRepo(remote); got != canonical {
+		t.Errorf("after capture, mineSearchRepo = %+v, want canonical %+v", got, canonical)
+	}
+}
+
+// On a renamed repo, the mine search must filter by the canonical name once the
+// conn has captured it (not the stale remote-derived name).
+func TestFetchMineItemsUsesCanonicalRepo(t *testing.T) {
+	fake := &fakeGraphQLClient{
+		respJSON: `{"issues":{"issueCount":0,"nodes":[]},"prs":{"issueCount":0,"nodes":[]}}`,
+	}
+	// Remote carries the pre-rename name; canonical is already cached on the conn.
+	withFakeGitHub(t, fake, nil, repoInfo{Owner: "Bisonai", Name: "datamaxi"}, nil)
+
+	conn := &githubConn{}
+	conn.setCanonicalRepo("Bisonai/datamaxi-backend")
+	fetchMineItems(conn)()
+
+	want := "repo:Bisonai/datamaxi-backend is:open is:issue involves:@me"
+	if got := fake.lastVars()["issueSearch"]; got != want {
+		t.Errorf("issueSearch var = %v, want %q (canonical name)", got, want)
+	}
+	wantPR := "repo:Bisonai/datamaxi-backend is:open is:pr involves:@me"
+	if got := fake.lastVars()["prSearch"]; got != wantPR {
+		t.Errorf("prSearch var = %v, want %q (canonical name)", got, wantPR)
+	}
+}
+
+// Before a list query has captured a canonical name, the mine search falls back
+// to the remote-derived name rather than erroring or searching an empty filter.
+func TestFetchMineItemsFallsBackToRemoteRepo(t *testing.T) {
+	fake := &fakeGraphQLClient{
+		respJSON: `{"issues":{"issueCount":0,"nodes":[]},"prs":{"issueCount":0,"nodes":[]}}`,
+	}
+	withFakeGitHub(t, fake, nil, repoInfo{Owner: "Bisonai", Name: "datamaxi"}, nil)
+
+	fetchMineItems(&githubConn{})()
+
+	want := "repo:Bisonai/datamaxi is:open is:issue involves:@me"
+	if got := fake.lastVars()["issueSearch"]; got != want {
+		t.Errorf("issueSearch var = %v, want %q (remote fallback)", got, want)
+	}
+}
+
 // --- fetchLabels (batched visible-window prefetch) ---
 
 // A mixed issue+PR batch builds one aliased query and maps each alias's labels

@@ -63,6 +63,16 @@ type githubConn struct {
 	mu     sync.Mutex
 	client graphQLClient
 	repo   repoInfo
+	// canonical is the rename-resolved owner/name captured from a successful list
+	// query's repository.nameWithOwner (see setCanonicalRepo). The local git remote
+	// can carry a repo's pre-rename name; the default list view's repository(owner,
+	// name) query follows GitHub's rename redirect, but the mine-scope search index
+	// only knows the canonical current name. Caching the canonical identity here
+	// lets mineSearchQuery build a rename-proof repo: filter (see canonicalRepo).
+	// valid stays false until a list query lands, so the mine path falls back to
+	// the remote-derived repo on the first fetch / before the list resolves.
+	canonical      repoInfo
+	canonicalValid bool
 	// rl is the most recent GraphQL rate-limit reading pulled from a successful
 	// list-level query (see setRateLimit). It is read on the UI goroutine to gate
 	// the auto-refresh poll and render the status-bar notice; the mutex guards it
@@ -108,6 +118,43 @@ func (c *githubConn) rateLimitState() rateLimitSnapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.rl
+}
+
+// setCanonicalRepo records the rename-resolved owner/name from a successful list
+// query (repository.nameWithOwner, "owner/name"). A blank or malformed value is
+// dropped so the mine path keeps falling back to the remote-derived repo rather
+// than searching an empty filter. Safe to call from the concurrent fetch
+// goroutines.
+func (c *githubConn) setCanonicalRepo(nameWithOwner string) {
+	owner, name, ok := strings.Cut(nameWithOwner, "/")
+	if !ok || owner == "" || name == "" {
+		return
+	}
+	c.mu.Lock()
+	c.canonical = repoInfo{Owner: owner, Name: name}
+	c.canonicalValid = true
+	c.mu.Unlock()
+}
+
+// canonicalRepo returns the cached rename-resolved repo and whether one has been
+// captured yet. Callers fall back to the remote-derived repo when ok is false.
+// Safe to call from the concurrent fetch goroutines.
+func (c *githubConn) canonicalRepo() (repoInfo, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.canonical, c.canonicalValid
+}
+
+// mineSearchRepo returns the repo identity the mine-scope search filter should
+// use: the cached canonical (rename-resolved) repo when a list query has captured
+// one, otherwise the given remote-derived fallback. This keeps the mine toggle
+// rename-proof on the common path while still working before the first list query
+// resolves the canonical name. Safe to call from the concurrent fetch goroutines.
+func (c *githubConn) mineSearchRepo(fallback repoInfo) repoInfo {
+	if canonical, ok := c.canonicalRepo(); ok {
+		return canonical
+	}
+	return fallback
 }
 
 // resolve returns the memoized client+repo, resolving them via the
@@ -541,6 +588,7 @@ var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 			query($owner: String!, $repo: String!, $first: Int!) {
 				rateLimit { remaining resetAt }
 				repository(owner: $owner, name: $repo) {
+					nameWithOwner
 					issues(first: $first, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
 						totalCount
 						pageInfo { endCursor hasNextPage }
@@ -573,7 +621,8 @@ var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 		type response struct {
 			RateLimit  rateLimitNode `json:"rateLimit"`
 			Repository struct {
-				Issues struct {
+				NameWithOwner string `json:"nameWithOwner"`
+				Issues        struct {
 					TotalCount int        `json:"totalCount"`
 					PageInfo   pageInfo   `json:"pageInfo"`
 					Nodes      []listNode `json:"nodes"`
@@ -591,6 +640,10 @@ var fetchIssuesAndPRs = func(conn *githubConn) tea.Cmd {
 			return errMsg{err}
 		}
 		conn.setRateLimit(resp.RateLimit)
+		// Capture the rename-resolved identity so the mine-scope search filter is
+		// rename-proof (the default repository() query above follows GitHub's rename
+		// redirect; the search index only knows the canonical current name).
+		conn.setCanonicalRepo(resp.Repository.NameWithOwner)
 
 		return dataMsg{
 			issues:           listItemsFromNodes(resp.Repository.Issues.Nodes, "issue"),
@@ -695,6 +748,12 @@ type mineSearchNode struct {
 // "is:pr") in the repo that involve the current user (involves:@me covers
 // authored, assigned, mentioned, or commented-on). Scoping each tab to its own
 // type is what gives each an accurate count and an independent pagination cursor.
+//
+// The repo must be the canonical (rename-resolved) identity when one is known:
+// the search index only indexes a repo under its current name, so a stale
+// remote-derived name yields an empty result on a renamed repo (issue #172).
+// Callers pass conn.mineSearchRepo(), which prefers the cached canonical name and
+// falls back to the remote-derived repo before the list query has resolved one.
 func mineSearchQuery(repo repoInfo, typeQualifier string) string {
 	return fmt.Sprintf("repo:%s/%s is:open %s involves:@me", repo.Owner, repo.Name, typeQualifier)
 }
@@ -756,9 +815,10 @@ var fetchMineItems = func(conn *githubConn) tea.Cmd {
 				}
 			}
 		`
+		searchRepo := conn.mineSearchRepo(repo)
 		variables := map[string]interface{}{
-			"issueSearch": mineSearchQuery(repo, "is:issue"),
-			"prSearch":    mineSearchQuery(repo, "is:pr"),
+			"issueSearch": mineSearchQuery(searchRepo, "is:issue"),
+			"prSearch":    mineSearchQuery(searchRepo, "is:pr"),
 			"first":       listPageSize,
 		}
 
@@ -836,7 +896,7 @@ var fetchMoreMineItems = func(conn *githubConn, t tab, after string) tea.Cmd {
 			}
 		`
 		variables := map[string]interface{}{
-			"search": mineSearchQuery(repo, typeQualifier),
+			"search": mineSearchQuery(conn.mineSearchRepo(repo), typeQualifier),
 			"first":  listPageSize,
 			"after":  after,
 		}
