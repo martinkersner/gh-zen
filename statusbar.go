@@ -113,9 +113,14 @@ func (m model) renderStatusBar() string {
 	// together as `@me · <notice>`; when only one is active that one is centered
 	// alone; when neither is active the middle stays empty. The `@me` scope is
 	// styled in the muted bar color so it reads as a quiet status, while the notice
-	// keeps the diff-delete (red) color so it reads as an alert. The composed
-	// string is only centered if it fits within the gap; otherwise we fall back to
-	// an empty spacer so the bar never wraps past its single reserved line.
+	// keeps the diff-delete (red) color so it reads as an alert.
+	//
+	// The content is anchored to the terminal's TRUE center (m.width/2), not the
+	// center of the (left-shrinking) gap — otherwise a growing filter query on the
+	// left would push it rightward. It holds that fixed column until the query
+	// grows long enough to reach it; at that point it is dropped whole (not pushed)
+	// so the query takes the space. It is also dropped if it can't fit before the
+	// right-side hints, so the bar never wraps past its single reserved line.
 	middle := lipgloss.NewStyle().Width(gap).Render("")
 	var parts []string
 	if m.mineOnly {
@@ -126,8 +131,15 @@ func (m model) renderStatusBar() string {
 	}
 	if len(parts) > 0 {
 		styled := strings.Join(parts, barStyle.Render(" · "))
-		if lipgloss.Width(styled) <= gap {
-			middle = lipgloss.PlaceHorizontal(gap, lipgloss.Center, styled)
+		midW := lipgloss.Width(styled)
+		// leftPad is the distance from the start of the gap region (which begins
+		// right after `left`) to the content's fixed center column. Require a
+		// 1-col space after `left` (leftPad >= 1) and that the content still ends
+		// within the gap (leftPad+midW <= gap, i.e. at or before the hints);
+		// otherwise drop it whole.
+		leftPad := (m.width-midW)/2 - lipgloss.Width(left)
+		if leftPad >= 1 && leftPad+midW <= gap {
+			middle = lipgloss.NewStyle().Width(gap).Render(strings.Repeat(" ", leftPad) + styled)
 		}
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Left, left, middle, hints)
