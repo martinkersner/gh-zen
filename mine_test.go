@@ -138,6 +138,44 @@ func TestStatusBarComposesMineScopeAndRateLimitNotice(t *testing.T) {
 	}
 }
 
+// The centered `@me` scope holds a fixed column as the filter query on the left
+// grows, then is dropped whole once the query reaches its slot (rather than
+// being pushed rightward).
+func TestStatusBarMineScopeFixedCenterUnderFilter(t *testing.T) {
+	stubMineFetch(t, dataMsg{issues: mkItems(20, "issue")})
+
+	// Enable the scope up front (not via `m`, which sets the loading flag — that
+	// would prefix the multibyte `⟳ loading…` indicator on the left and make the
+	// byte-offset column read below meaningless).
+	m := newModel()
+	m.mineOnly = true
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(dataMsg{issues: mkItems(20, "issue")})
+
+	col := func() int {
+		return strings.Index(ansi.Strip(tm.(model).renderStatusBar()), mineScopeLabel)
+	}
+
+	base := col()
+	if base < 0 {
+		t.Fatalf("@me not shown with mine scope on: %q", ansi.Strip(tm.(model).renderStatusBar()))
+	}
+
+	// Start filtering and type a short query: the @me column must not move.
+	tm, _ = pressKey(tm, "/")
+	tm, _ = pressKey(tm, "ab")
+	if got := col(); got != base {
+		t.Errorf("@me moved with short filter: col %d, want fixed %d", got, base)
+	}
+
+	// Type a long query that reaches the center slot: @me is dropped whole.
+	tm, _ = pressKey(tm, strings.Repeat("x", 50))
+	if got := col(); got != -1 {
+		t.Errorf("@me not dropped under long filter (col %d): %q", got, ansi.Strip(tm.(model).renderStatusBar()))
+	}
+}
+
 // The auto-refresh tick routes through the mine fetch path while mineOnly is on
 // (and pagination hasn't kicked in).
 func TestMineTickRefreshesViaMineFetch(t *testing.T) {
