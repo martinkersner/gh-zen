@@ -456,6 +456,46 @@ func TestStatusBarMineScopeNotDroppedByLoading(t *testing.T) {
 	}
 }
 
+// Overlap band (known limitation): at a width where the loading-prefixed left
+// text reaches past the true-center anchor column, `@me` physically cannot stay
+// at the anchor — the left text already occupies that column. The fix keeps the
+// label PRESENT (clamping the pad to 0 so it sits just right of the indicator)
+// rather than dropping it, which is the lesser evil: dropping would reintroduce
+// the appear/disappear flicker the keep-or-drop fix targets. A small, bounded
+// rightward shift remains in this band; it is never a drop and never a wrap.
+//
+// Width 78 → anchor col (78-3)/2 = 37. A 26-char filter renders 27 wide:
+// loading-off leftPad = 37-27 = 10 (anchored at col 37); loading-on the prefix
+// ("loading… · ", 11 wide) makes the left 38 wide, leftPad = -1 → pad 0, so the
+// label sits at col 38. Present in both states, single line in both.
+func TestStatusBarMineScopeOverlapBandStaysPresent(t *testing.T) {
+	m := newModel()
+	m.width = 78
+	m.mineOnly = true
+	m.issueList.SetItems([]list.Item{item{number: 1, title: "a", type_: "issue"}})
+	m.issueList.SetFilterText(strings.Repeat("a", 26))
+
+	m.loading = false
+	offBar := m.renderStatusBar()
+	m.loading = true
+	onBar := m.renderStatusBar()
+
+	if mineCol(offBar) < 0 {
+		t.Fatalf("setup: @me missing with loading off: %q", ansi.Strip(offBar))
+	}
+	// The label must remain present (not dropped) and the bar must not wrap when
+	// loading toggles in the overlap band.
+	if mineCol(onBar) < 0 {
+		t.Errorf("@me dropped in overlap band when loading turned on: %q", ansi.Strip(onBar))
+	}
+	if strings.Contains(onBar, "\n") {
+		t.Errorf("status bar wrapped in overlap band: %q", ansi.Strip(onBar))
+	}
+	if w := lipgloss.Width(onBar); w > m.width {
+		t.Errorf("status bar width %d exceeds terminal width %d in overlap band: %q", w, m.width, ansi.Strip(onBar))
+	}
+}
+
 // Anchoring `@me` while the loading indicator is shown must never push the
 // content past the gap and wrap the bar onto a second row. At degenerate narrow
 // widths the indicator plus `@me` plus the hints cannot share one line, so `@me`
