@@ -385,11 +385,11 @@ func TestStatusBarShowsLoadingIndicatorForDetail(t *testing.T) {
 // the column whenever the indicator precedes the label.
 func mineCol(bar string) int {
 	s := ansi.Strip(bar)
-	i := strings.Index(s, mineScopeLabel)
-	if i < 0 {
+	before, _, found := strings.Cut(s, mineScopeLabel)
+	if !found {
 		return -1
 	}
-	return lipgloss.Width(s[:i])
+	return lipgloss.Width(before)
 }
 
 // Regression for #177: with the `@me` scope active the centered label must not

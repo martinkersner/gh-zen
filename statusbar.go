@@ -148,10 +148,7 @@ func (m model) renderStatusBar() string {
 		// content, leftPad >= 0 keeps `@me` pinned to the same column with or
 		// without the indicator; clamp at 0 inside that band (the content shifts
 		// right by the overlap) so the gap fill never gets a negative repeat.
-		pad := leftPad
-		if pad < 0 {
-			pad = 0
-		}
+		pad := max(leftPad, 0)
 		// The keep-or-drop decision must NOT depend on the transient loading
 		// indicator, otherwise `@me` would appear/disappear as loading toggles.
 		// Gate the left-collision check on baseLeftPad (the distance using the
