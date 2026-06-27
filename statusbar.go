@@ -69,6 +69,10 @@ func (m model) renderStatusBar() string {
 
 	hasLeft := left != ""
 	left = leftStyle.Render(left)
+	// Width of the left side BEFORE the transient loading indicator is prefixed.
+	// The middle `@me`/notice keep-or-drop decision is gated on this base width so
+	// the indicator can never flip it (see the drop guard below).
+	baseLeftW := lipgloss.Width(left)
 
 	// While a user-visible fetch is in flight (initial load, manual refresh, or a
 	// lazily-fetched detail body / PR diff) surface a dim indicator on the left
@@ -133,13 +137,29 @@ func (m model) renderStatusBar() string {
 		styled := strings.Join(parts, barStyle.Render(" · "))
 		midW := lipgloss.Width(styled)
 		// leftPad is the distance from the start of the gap region (which begins
-		// right after `left`) to the content's fixed center column. Require a
-		// 1-col space after `left` (leftPad >= 1) and that the content still ends
-		// within the gap (leftPad+midW <= gap, i.e. at or before the hints);
-		// otherwise drop it whole.
+		// right after `left`) to the content's fixed center column, computed from
+		// the REAL left width (loading indicator included) so the content stays
+		// anchored to the terminal's true center whether or not the indicator is
+		// showing.
 		leftPad := (m.width-midW)/2 - lipgloss.Width(left)
-		if leftPad >= 1 && leftPad+midW <= gap {
-			middle = lipgloss.NewStyle().Width(gap).Render(strings.Repeat(" ", leftPad) + styled)
+		baseLeftPad := (m.width-midW)/2 - baseLeftW
+		// pad is the padding actually rendered before the content. Outside the
+		// narrow band where the indicator would physically overlap the anchored
+		// content, leftPad >= 0 keeps `@me` pinned to the same column with or
+		// without the indicator; clamp at 0 inside that band (the content shifts
+		// right by the overlap) so the gap fill never gets a negative repeat.
+		pad := max(leftPad, 0)
+		// The keep-or-drop decision must NOT depend on the transient loading
+		// indicator, otherwise `@me` would appear/disappear as loading toggles.
+		// Gate the left-collision check on baseLeftPad (the distance using the
+		// non-loading left width): a long filter query in the base left is a real
+		// collision that still drops `@me` whole, but the indicator never flips it.
+		// The right-side fit (pad+midW <= gap) is checked against the ACTUAL
+		// rendered pad so the content can never exceed the gap and wrap the bar
+		// onto a second line; at degenerate widths where the indicator leaves no
+		// room, `@me` is dropped whole (never wrapped), matching pre-anchor behavior.
+		if baseLeftPad >= 1 && pad+midW <= gap {
+			middle = lipgloss.NewStyle().Width(gap).Render(strings.Repeat(" ", pad) + styled)
 		}
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Left, left, middle, hints)

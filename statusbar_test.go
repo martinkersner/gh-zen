@@ -378,6 +378,155 @@ func TestStatusBarShowsLoadingIndicatorForDetail(t *testing.T) {
 	}
 }
 
+// mineCol returns the 0-based display column of the `@me` scope label in the
+// rendered (ANSI-stripped) status bar, or -1 if the label was dropped. It uses
+// the display width of the preceding text (not the byte offset): the loading
+// indicator contains a multibyte ellipsis, so a raw byte index would overstate
+// the column whenever the indicator precedes the label.
+func mineCol(bar string) int {
+	s := ansi.Strip(bar)
+	before, _, found := strings.Cut(s, mineScopeLabel)
+	if !found {
+		return -1
+	}
+	return lipgloss.Width(before)
+}
+
+// Regression for #177: with the `@me` scope active the centered label must not
+// move horizontally when the loading indicator toggles. #176 anchored it to the
+// terminal's true center (independent of the left width, where the loading
+// indicator lives), so its column is identical loading-on vs loading-off.
+func TestStatusBarMineScopeUnshiftedByLoading(t *testing.T) {
+	m := newModel()
+	m.width = 80
+	m.mineOnly = true
+
+	m.loading = false
+	offBar := m.renderStatusBar()
+	m.loading = true
+	onBar := m.renderStatusBar()
+
+	off, on := mineCol(offBar), mineCol(onBar)
+	if off < 0 {
+		t.Fatalf("@me label missing with loading off: %q", ansi.Strip(offBar))
+	}
+	if on < 0 {
+		t.Fatalf("@me label missing with loading on: %q", ansi.Strip(onBar))
+	}
+	if on != off {
+		t.Errorf("@me shifted when loading toggled: off col %d, on col %d", off, on)
+	}
+}
+
+// Regression for #177 drop edge: at a width where `@me` fits without loading but
+// the loading indicator shrinks the computed left padding below the old
+// `leftPad >= 1` threshold, the pre-fix code DROPPED `@me` entirely when loading
+// turned on (it appeared/disappeared as loading toggled). The keep/drop decision
+// now ignores the transient indicator — gated on the base, non-loading left
+// width — so `@me` stays present AND at the same column.
+//
+// Width 80 → anchor col (80-3)/2 = 38. A 26-char filter query renders 27 wide,
+// leaving baseLeftPad = 38-27 = 11; the loading prefix ("loading… · ") is also
+// 11 wide, so loading-on leftPad = 0. The old code (0 < 1) dropped the label;
+// the new code keeps it pinned at col 38. (This test FAILS on the pre-fix code.)
+func TestStatusBarMineScopeNotDroppedByLoading(t *testing.T) {
+	m := newModel()
+	m.width = 80
+	m.mineOnly = true
+	m.issueList.SetItems([]list.Item{item{number: 1, title: "a", type_: "issue"}})
+	m.issueList.SetFilterText(strings.Repeat("a", 26))
+	if m.issueList.FilterState() != list.FilterApplied {
+		t.Fatalf("setup: want FilterApplied, got %v", m.issueList.FilterState())
+	}
+
+	m.loading = false
+	offBar := m.renderStatusBar()
+	m.loading = true
+	onBar := m.renderStatusBar()
+
+	off, on := mineCol(offBar), mineCol(onBar)
+	if off < 0 {
+		t.Fatalf("setup: @me missing with loading off (pick a width where it fits): %q", ansi.Strip(offBar))
+	}
+	if on < 0 {
+		t.Errorf("@me dropped when loading turned on (drop-edge regression): %q", ansi.Strip(onBar))
+	}
+	if on >= 0 && on != off {
+		t.Errorf("@me shifted when loading toggled: off col %d, on col %d", off, on)
+	}
+}
+
+// Overlap band (known limitation): at a width where the loading-prefixed left
+// text reaches past the true-center anchor column, `@me` physically cannot stay
+// at the anchor — the left text already occupies that column. The fix keeps the
+// label PRESENT (clamping the pad to 0 so it sits just right of the indicator)
+// rather than dropping it, which is the lesser evil: dropping would reintroduce
+// the appear/disappear flicker the keep-or-drop fix targets. A small, bounded
+// rightward shift remains in this band; it is never a drop and never a wrap.
+//
+// Width 78 → anchor col (78-3)/2 = 37. A 26-char filter renders 27 wide:
+// loading-off leftPad = 37-27 = 10 (anchored at col 37); loading-on the prefix
+// ("loading… · ", 11 wide) makes the left 38 wide, leftPad = -1 → pad 0, so the
+// label sits at col 38. Present in both states, single line in both.
+func TestStatusBarMineScopeOverlapBandStaysPresent(t *testing.T) {
+	m := newModel()
+	m.width = 78
+	m.mineOnly = true
+	m.issueList.SetItems([]list.Item{item{number: 1, title: "a", type_: "issue"}})
+	m.issueList.SetFilterText(strings.Repeat("a", 26))
+
+	m.loading = false
+	offBar := m.renderStatusBar()
+	m.loading = true
+	onBar := m.renderStatusBar()
+
+	if mineCol(offBar) < 0 {
+		t.Fatalf("setup: @me missing with loading off: %q", ansi.Strip(offBar))
+	}
+	// The label must remain present (not dropped) and the bar must not wrap when
+	// loading toggles in the overlap band.
+	if mineCol(onBar) < 0 {
+		t.Errorf("@me dropped in overlap band when loading turned on: %q", ansi.Strip(onBar))
+	}
+	if strings.Contains(onBar, "\n") {
+		t.Errorf("status bar wrapped in overlap band: %q", ansi.Strip(onBar))
+	}
+	if w := lipgloss.Width(onBar); w > m.width {
+		t.Errorf("status bar width %d exceeds terminal width %d in overlap band: %q", w, m.width, ansi.Strip(onBar))
+	}
+}
+
+// Anchoring `@me` while the loading indicator is shown must never push the
+// content past the gap and wrap the bar onto a second row. At degenerate narrow
+// widths the indicator plus `@me` plus the hints cannot share one line, so `@me`
+// is dropped whole — but the single reserved status line is never exceeded. This
+// guards the clamp path (loading-on leftPad < 0), where rendering the content at
+// pad 0 could otherwise overflow the gap and wrap.
+func TestStatusBarMineScopeNeverWrapsUnderLoading(t *testing.T) {
+	for w := 10; w <= 40; w++ {
+		for flen := 0; flen <= 8; flen++ {
+			m := newModel()
+			var tm tea.Model = m
+			tm, _ = tm.Update(tea.WindowSizeMsg{Width: w, Height: 24})
+			tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+			for i := 0; i < flen; i++ {
+				tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+			}
+			mm := tm.(model)
+			mm.width = w
+			mm.mineOnly = true
+			mm.loading = true
+			bar := mm.renderStatusBar()
+			if strings.Contains(bar, "\n") {
+				t.Errorf("status bar wrapped at width=%d filterLen=%d: %q", w, flen, ansi.Strip(bar))
+			}
+			if width := lipgloss.Width(bar); width > w {
+				t.Errorf("status bar width %d exceeds terminal width %d (width=%d filterLen=%d): %q", width, w, w, flen, ansi.Strip(bar))
+			}
+		}
+	}
+}
+
 // The loading indicator the status bar actually renders while a fetch is in
 // flight is the bare word "loading" (with ellipsis) and carries no leading
 // spinner glyph, so it reads as a quiet status. Asserting against the rendered
