@@ -456,6 +456,37 @@ func TestStatusBarMineScopeNotDroppedByLoading(t *testing.T) {
 	}
 }
 
+// Anchoring `@me` while the loading indicator is shown must never push the
+// content past the gap and wrap the bar onto a second row. At degenerate narrow
+// widths the indicator plus `@me` plus the hints cannot share one line, so `@me`
+// is dropped whole — but the single reserved status line is never exceeded. This
+// guards the clamp path (loading-on leftPad < 0), where rendering the content at
+// pad 0 could otherwise overflow the gap and wrap.
+func TestStatusBarMineScopeNeverWrapsUnderLoading(t *testing.T) {
+	for w := 10; w <= 40; w++ {
+		for flen := 0; flen <= 8; flen++ {
+			m := newModel()
+			var tm tea.Model = m
+			tm, _ = tm.Update(tea.WindowSizeMsg{Width: w, Height: 24})
+			tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+			for i := 0; i < flen; i++ {
+				tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+			}
+			mm := tm.(model)
+			mm.width = w
+			mm.mineOnly = true
+			mm.loading = true
+			bar := mm.renderStatusBar()
+			if strings.Contains(bar, "\n") {
+				t.Errorf("status bar wrapped at width=%d filterLen=%d: %q", w, flen, ansi.Strip(bar))
+			}
+			if width := lipgloss.Width(bar); width > w {
+				t.Errorf("status bar width %d exceeds terminal width %d (width=%d filterLen=%d): %q", width, w, w, flen, ansi.Strip(bar))
+			}
+		}
+	}
+}
+
 // The loading indicator the status bar actually renders while a fetch is in
 // flight is the bare word "loading" (with ellipsis) and carries no leading
 // spinner glyph, so it reads as a quiet status. Asserting against the rendered

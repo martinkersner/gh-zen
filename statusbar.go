@@ -142,23 +142,26 @@ func (m model) renderStatusBar() string {
 		// anchored to the terminal's true center whether or not the indicator is
 		// showing.
 		leftPad := (m.width-midW)/2 - lipgloss.Width(left)
+		baseLeftPad := (m.width-midW)/2 - baseLeftW
+		// pad is the padding actually rendered before the content. Outside the
+		// narrow band where the indicator would physically overlap the anchored
+		// content, leftPad >= 0 keeps `@me` pinned to the same column with or
+		// without the indicator; clamp at 0 inside that band (the content shifts
+		// right by the overlap) so the gap fill never gets a negative repeat.
+		pad := leftPad
+		if pad < 0 {
+			pad = 0
+		}
 		// The keep-or-drop decision must NOT depend on the transient loading
 		// indicator, otherwise `@me` would appear/disappear as loading toggles.
 		// Gate the left-collision check on baseLeftPad (the distance using the
 		// non-loading left width): a long filter query in the base left is a real
 		// collision that still drops `@me` whole, but the indicator never flips it.
-		// The right-side hint collision (leftPad+midW <= gap) is already
-		// left-width-independent — width(left) cancels — so it ignores both.
-		baseLeftPad := (m.width-midW)/2 - baseLeftW
-		if baseLeftPad >= 1 && leftPad+midW <= gap {
-			// Outside the narrow band where the indicator would physically overlap
-			// the anchored content, leftPad >= 0 keeps `@me` pinned to the same
-			// column with or without the indicator. Clamp at 0 inside that band so
-			// the content shifts right by the overlap instead of panicking.
-			pad := leftPad
-			if pad < 0 {
-				pad = 0
-			}
+		// The right-side fit (pad+midW <= gap) is checked against the ACTUAL
+		// rendered pad so the content can never exceed the gap and wrap the bar
+		// onto a second line; at degenerate widths where the indicator leaves no
+		// room, `@me` is dropped whole (never wrapped), matching pre-anchor behavior.
+		if baseLeftPad >= 1 && pad+midW <= gap {
 			middle = lipgloss.NewStyle().Width(gap).Render(strings.Repeat(" ", pad) + styled)
 		}
 	}
