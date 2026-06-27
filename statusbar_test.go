@@ -378,6 +378,84 @@ func TestStatusBarShowsLoadingIndicatorForDetail(t *testing.T) {
 	}
 }
 
+// mineCol returns the 0-based display column of the `@me` scope label in the
+// rendered (ANSI-stripped) status bar, or -1 if the label was dropped. It uses
+// the display width of the preceding text (not the byte offset): the loading
+// indicator contains a multibyte ellipsis, so a raw byte index would overstate
+// the column whenever the indicator precedes the label.
+func mineCol(bar string) int {
+	s := ansi.Strip(bar)
+	i := strings.Index(s, mineScopeLabel)
+	if i < 0 {
+		return -1
+	}
+	return lipgloss.Width(s[:i])
+}
+
+// Regression for #177: with the `@me` scope active the centered label must not
+// move horizontally when the loading indicator toggles. #176 anchored it to the
+// terminal's true center (independent of the left width, where the loading
+// indicator lives), so its column is identical loading-on vs loading-off.
+func TestStatusBarMineScopeUnshiftedByLoading(t *testing.T) {
+	m := newModel()
+	m.width = 80
+	m.mineOnly = true
+
+	m.loading = false
+	offBar := m.renderStatusBar()
+	m.loading = true
+	onBar := m.renderStatusBar()
+
+	off, on := mineCol(offBar), mineCol(onBar)
+	if off < 0 {
+		t.Fatalf("@me label missing with loading off: %q", ansi.Strip(offBar))
+	}
+	if on < 0 {
+		t.Fatalf("@me label missing with loading on: %q", ansi.Strip(onBar))
+	}
+	if on != off {
+		t.Errorf("@me shifted when loading toggled: off col %d, on col %d", off, on)
+	}
+}
+
+// Regression for #177 drop edge: at a width where `@me` fits without loading but
+// the loading indicator shrinks the computed left padding below the old
+// `leftPad >= 1` threshold, the pre-fix code DROPPED `@me` entirely when loading
+// turned on (it appeared/disappeared as loading toggled). The keep/drop decision
+// now ignores the transient indicator — gated on the base, non-loading left
+// width — so `@me` stays present AND at the same column.
+//
+// Width 80 → anchor col (80-3)/2 = 38. A 26-char filter query renders 27 wide,
+// leaving baseLeftPad = 38-27 = 11; the loading prefix ("loading… · ") is also
+// 11 wide, so loading-on leftPad = 0. The old code (0 < 1) dropped the label;
+// the new code keeps it pinned at col 38. (This test FAILS on the pre-fix code.)
+func TestStatusBarMineScopeNotDroppedByLoading(t *testing.T) {
+	m := newModel()
+	m.width = 80
+	m.mineOnly = true
+	m.issueList.SetItems([]list.Item{item{number: 1, title: "a", type_: "issue"}})
+	m.issueList.SetFilterText(strings.Repeat("a", 26))
+	if m.issueList.FilterState() != list.FilterApplied {
+		t.Fatalf("setup: want FilterApplied, got %v", m.issueList.FilterState())
+	}
+
+	m.loading = false
+	offBar := m.renderStatusBar()
+	m.loading = true
+	onBar := m.renderStatusBar()
+
+	off, on := mineCol(offBar), mineCol(onBar)
+	if off < 0 {
+		t.Fatalf("setup: @me missing with loading off (pick a width where it fits): %q", ansi.Strip(offBar))
+	}
+	if on < 0 {
+		t.Errorf("@me dropped when loading turned on (drop-edge regression): %q", ansi.Strip(onBar))
+	}
+	if on >= 0 && on != off {
+		t.Errorf("@me shifted when loading toggled: off col %d, on col %d", off, on)
+	}
+}
+
 // The loading indicator the status bar actually renders while a fetch is in
 // flight is the bare word "loading" (with ellipsis) and carries no leading
 // spinner glyph, so it reads as a quiet status. Asserting against the rendered
